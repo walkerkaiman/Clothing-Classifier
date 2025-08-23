@@ -4,7 +4,7 @@
 [app]
 data_dir = "data"
 write_interval = 1.0
-log_level = "INFO"
+log_level = "DEBUG"
 
 [app.camera]
 id = 0
@@ -19,8 +19,8 @@ iou = 0.5
 
 [app.clothing]
 enabled = true
-model_type = "simple"  # "simple" or "advanced"
-model_name = "Salesforce/blip-image-captioning-base"
+model_type = "advanced"  # "simple", "advanced", or "fashionpedia"
+model_name = "Salesforce/blip-image-captioning-base"  # Actual vision-language model
 update_frequency = 1.0  # seconds between clothing updates
 min_person_confidence = 0.5
 

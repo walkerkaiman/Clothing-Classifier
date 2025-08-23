@@ -36,9 +36,18 @@ from typing import Dict, Optional, List, Tuple, Any
 import cv2  # type: ignore
 from ultralytics import YOLO  # type: ignore
 import torch  # new import
+import numpy as np  # needed for Fashionpedia detector
+
+# Initialize configuration FIRST, before any other imports
+from .config.manager import set_settings_path
+config_path = Path(__file__).parent.parent / "config.toml"
+if config_path.exists():
+    set_settings_path(config_path)
+    print(f"Loaded configuration from: {config_path}")
 
 # Import clothing detection and server modules
 from .clothing_detector import ClothingDetector, SimpleClothingDetector
+from .fashionpedia_detector import FashionpediaDetector
 from .json_server import create_server
 from .config.manager import get_settings
 
@@ -192,28 +201,60 @@ class FrameGrabber(threading.Thread):
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
 
-        # Try indexes camera_index…camera_index+9
+        # Try indexes camera_index…camera_index+3 with better backend priority
         self._cap = None
-        for idx in range(camera_index, camera_index + 50):
+        # Prioritize DSHOW over MSMF to avoid the common MSMF errors
+        backends = [
+            ("DSHOW", cv2.CAP_DSHOW),
+            ("MSMF", cv2.CAP_MSMF), 
+            ("ANY", cv2.CAP_ANY)
+        ]
+        
+        for idx in range(camera_index, camera_index + 3):
             found = False
-            for backend in (cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY):
-                cap = cv2.VideoCapture(idx, backend)
-                if cap.isOpened():
-                    print(f"Opened camera {idx} via backend {backend}")
-                    self._cap = cap
-                    found = True
-                    break
+            for backend_name, backend in backends:
+                try:
+                    cap = cv2.VideoCapture(idx, backend)
+                    if cap.isOpened():
+                        # Test if we can actually read a frame
+                        ret, test_frame = cap.read()
+                        if ret:
+                            print(f"Successfully opened camera {idx} via {backend_name} backend")
+                            self._cap = cap
+                            found = True
+                            break
+                        else:
+                            cap.release()
+                    else:
+                        cap.release()
+                except Exception as e:
+                    print(f"Failed to open camera {idx} with {backend_name}: {e}")
+                    continue
             if found:
                 break
+        
         if self._cap is None:
-            raise RuntimeError("Unable to open any webcam (indexes 0–9)")
+            raise RuntimeError("Unable to open any working webcam")
 
     def run(self) -> None:  # type: ignore[override]
+        # Add buffer settings for more stable capture
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to get latest frames
+        self._cap.set(cv2.CAP_PROP_FPS, 30)  # Set consistent frame rate
+        
+        consecutive_failures = 0
+        max_failures = 10
+        
         while not self._stop_event.is_set():
             ret, frame = self._cap.read()
             if not ret:
+                consecutive_failures += 1
+                if consecutive_failures >= max_failures:
+                    print(f"Warning: {consecutive_failures} consecutive frame read failures")
+                    consecutive_failures = 0  # Reset counter
                 time.sleep(0.05)
                 continue
+            
+            consecutive_failures = 0  # Reset on successful read
             with self._lock:
                 self._latest = SimpleNamespace(frame=frame, ts=time.time())
 
@@ -242,20 +283,44 @@ def initialize_clothing_detection():
         
         # Initialize clothing detector
         if clothing_config.enabled:
-            if clothing_config.model_type == "advanced":
+            # Check model type from configuration
+            if clothing_config.model_type == "fashionpedia":
                 try:
-                    logging.info(f"Attempting to initialize advanced clothing detector: {clothing_config.model_name}")
+                    logging.info(f"Initializing Fashionpedia detector for fashion-specific clothing analysis")
+                    clothing_detector = FashionpediaDetector(
+                        model_name=clothing_config.model_name,
+                        device="cuda" if torch.cuda.is_available() else "cpu"
+                    )
+                    logging.info(f"Successfully initialized Fashionpedia detector")
+                except ImportError as e:
+                    logging.warning(f"Fashionpedia detection not available: {e}")
+                    logging.info("Falling back to simple clothing detector")
+                    clothing_detector = SimpleClothingDetector()
+                    logging.info("Successfully initialized simple clothing detector")
+                except Exception as e:
+                    logging.error(f"Failed to initialize Fashionpedia detector: {e}")
+                    logging.info("Falling back to simple clothing detector")
+                    clothing_detector = SimpleClothingDetector()
+                    logging.info("Successfully initialized simple clothing detector")
+            elif clothing_config.model_type == "advanced":
+                try:
+                    logging.info(f"Initializing advanced clothing detector: {clothing_config.model_name}")
                     clothing_detector = ClothingDetector(
                         model_name=clothing_config.model_name,
                         device="cuda" if torch.cuda.is_available() else "cpu"
                     )
-                    logging.info(f"Successfully initialized advanced clothing detector: {clothing_config.model_name}")
+                    logging.info(f"Successfully initialized advanced clothing detector")
                 except ImportError as e:
                     logging.warning(f"Advanced clothing detection not available: {e}")
                     logging.info("Falling back to simple clothing detector")
                     clothing_detector = SimpleClothingDetector()
                     logging.info("Successfully initialized simple clothing detector")
-            else:
+                except Exception as e:
+                    logging.error(f"Failed to initialize advanced clothing detector: {e}")
+                    logging.info("Falling back to simple clothing detector")
+                    clothing_detector = SimpleClothingDetector()
+                    logging.info("Successfully initialized simple clothing detector")
+            else:  # simple
                 logging.info("Initializing simple clothing detector")
                 clothing_detector = SimpleClothingDetector()
                 logging.info("Successfully initialized simple clothing detector")

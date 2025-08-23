@@ -155,34 +155,62 @@ class ClothingDetector:
             
             # Prepare inputs for the model
             if "blip" in self.model_name.lower():
+                # For BLIP, use basic image captioning (works much better than conditional generation)
                 inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
                 
-                # Generate caption with clothing-specific prompt
-                prompt = "Describe the person's clothing in detail:"
-                inputs["text"] = self.processor(prompt, return_tensors="pt").input_ids.to(self.device)
-                
+                # Generate caption without text input - this actually works!
                 outputs = self.model.generate(
                     **inputs,
-                    max_length=50,
+                    max_length=75,  # Longer for more detail
                     num_beams=5,
                     early_stopping=True,
-                    do_sample=False
+                    do_sample=True,  # Add some variety
+                    temperature=0.7
                 )
                 
                 caption = self.processor.decode(outputs[0], skip_special_tokens=True)
             else:
-                # Generic vision-language model approach
-                inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
+                # Use fashion-specific prompts for better clothing detection
+                fashion_prompts = [
+                    "What clothing items is this person wearing?",
+                    "Describe the person's outfit in detail:",
+                    "What clothes can you see in this image?",
+                    "List the clothing items visible:"
+                ]
                 
-                outputs = self.model.generate(
-                    **inputs,
-                    max_length=50,
-                    num_beams=5,
-                    early_stopping=True,
-                    do_sample=False
-                )
+                # Try multiple prompts and pick the best result
+                best_caption = ""
+                max_length = 0
                 
-                caption = self.processor.decode(outputs[0], skip_special_tokens=True)
+                for prompt in fashion_prompts:
+                    try:
+                        inputs = self.processor(pil_image, text=prompt, return_tensors="pt").to(self.device)
+                        
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_length=75,
+                            num_beams=5,
+                            early_stopping=True,
+                            do_sample=False,
+                            temperature=0.7
+                        )
+                        
+                        caption = self.processor.decode(outputs[0], skip_special_tokens=True)
+                        
+                        # Remove the prompt from the response
+                        if prompt.lower() in caption.lower():
+                            caption = caption.replace(prompt, "").strip()
+                        
+                        # Prefer longer, more detailed descriptions
+                        if len(caption.split()) > max_length:
+                            best_caption = caption
+                            max_length = len(caption.split())
+                            
+                    except Exception as e:
+                        logger.debug(f"Prompt failed: {prompt}, error: {e}")
+                        continue
+                
+                caption = best_caption if best_caption else "clothing not visible"
             
             # Clean and enhance the description
             description = self._enhance_clothing_description(caption)
@@ -240,37 +268,50 @@ class ClothingDetector:
         """Enhance and clean the clothing description.
         
         Args:
-            caption: Raw caption from the model
+            caption: Raw caption from the model (e.g., "a man wearing a green hat")
             
         Returns:
-            Enhanced clothing description
+            Enhanced clothing description focusing on the clothing items
         """
         # Convert to lowercase and clean up
         description = caption.lower().strip()
         
-        # Remove common non-clothing words
-        remove_words = [
-            "person", "man", "woman", "boy", "girl", "individual", "someone",
-            "standing", "sitting", "looking", "posing", "wearing", "has", "is"
+        # Extract clothing items from BLIP descriptions like "a man wearing a green hat"
+        clothing_patterns = [
+            r"wearing\s+(.+)",  # "wearing a green hat" -> "a green hat"
+            r"has\s+(.+)",      # "has a blue shirt" -> "a blue shirt"
+            r"with\s+(.+)",     # "with red pants" -> "red pants"
         ]
         
-        for word in remove_words:
-            description = description.replace(word, "").replace("  ", " ")
+        import re
+        for pattern in clothing_patterns:
+            match = re.search(pattern, description)
+            if match:
+                description = match.group(1).strip()
+                break
         
-        # Add clothing-specific enhancements
-        if "shirt" in description or "t-shirt" in description:
-            if "long sleeve" not in description and "short sleeve" not in description:
-                description = description.replace("shirt", "short sleeve shirt")
+        # Remove articles and clean up
+        description = re.sub(r'\b(a|an|the)\s+', '', description)
+        description = re.sub(r'\s+', ' ', description).strip()
         
-        # Clean up extra spaces and punctuation
-        description = " ".join(description.split())
-        description = description.strip("., ")
+        # Fashion-specific enhancements and standardization
+        fashion_replacements = {
+            "tshirt": "t-shirt",
+            "t shirt": "t-shirt", 
+            "trousers": "pants",
+            "cap": "hat",
+            "sneakers": "shoes",
+            "footwear": "shoes",
+        }
         
-        # If description is too short, add generic clothing terms
-        if len(description.split()) < 2:
-            description = "casual clothing"
+        for old_term, new_term in fashion_replacements.items():
+            description = description.replace(old_term, new_term)
         
-        return description
+        # If no meaningful clothing description, return a fallback
+        if not description or len(description.strip()) < 3:
+            return "clothing item"
+        
+        return description.strip()
     
     def process_detections(self, frame: np.ndarray, detections: List[Tuple[Tuple[int, int, int, int], str]]) -> List[Dict[str, Any]]:
         """Process all person detections and generate detailed clothing descriptions.
@@ -350,18 +391,19 @@ class SimpleClothingDetector:
     
     def __init__(self):
         """Initialize the simple clothing detector."""
+        # Improved HSV color ranges with better separation
         self.color_names = {
-            'red': ([0, 50, 50], [10, 255, 255]),
-            'orange': ([10, 50, 50], [25, 255, 255]),
-            'yellow': ([25, 50, 50], [35, 255, 255]),
-            'green': ([35, 50, 50], [85, 255, 255]),
-            'blue': ([85, 50, 50], [130, 255, 255]),
-            'purple': ([130, 50, 50], [170, 255, 255]),
-            'pink': ([170, 50, 50], [180, 255, 255]),
+            'red': ([0, 100, 100], [10, 255, 255]),      # Lower saturation threshold
+            'orange': ([10, 100, 100], [25, 255, 255]),
+            'yellow': ([25, 100, 100], [35, 255, 255]),
+            'green': ([35, 100, 100], [85, 255, 255]),
+            'blue': ([85, 100, 100], [130, 255, 255]),
+            'purple': ([130, 100, 100], [170, 255, 255]),
+            'pink': ([170, 100, 100], [180, 255, 255]),
             'white': ([0, 0, 200], [180, 30, 255]),
             'gray': ([0, 0, 100], [180, 30, 200]),
             'black': ([0, 0, 0], [180, 255, 30]),
-            'brown': ([10, 50, 20], [20, 255, 200])
+            'brown': ([10, 100, 50], [20, 255, 200])     # Better brown detection
         }
     
     def get_dominant_color(self, image: np.ndarray) -> str:
@@ -373,23 +415,43 @@ class SimpleClothingDetector:
         Returns:
             Dominant color name
         """
+        # Ensure image is large enough for accurate color detection
+        if image.shape[0] < 100 or image.shape[1] < 100:
+            # Resize to minimum size for better color detection
+            image = cv2.resize(image, (224, 224))
+        
         # Convert to HSV
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
-        # Calculate color histogram
-        hist = cv2.calcHist([hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+        # Apply some preprocessing to improve color detection
+        # Blur slightly to reduce noise
+        hsv = cv2.GaussianBlur(hsv, (5, 5), 0)
         
         # Find dominant color
         max_val = 0
         dominant_color = "unknown"
+        color_counts = {}
         
         for color_name, (lower, upper) in self.color_names.items():
             mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
             color_pixels = cv2.countNonZero(mask)
+            color_counts[color_name] = color_pixels
             
             if color_pixels > max_val:
                 max_val = color_pixels
                 dominant_color = color_name
+        
+        # Only return a color if it has a significant presence
+        total_pixels = image.shape[0] * image.shape[1]
+        color_percentage = max_val / total_pixels
+        
+        if color_percentage < 0.1:  # Less than 10% of pixels
+            dominant_color = "unknown"
+            logger.debug(f"Color percentage too low: {color_percentage:.3f}")
+        
+        # Debug logging
+        logger.debug(f"Color detection results: {color_counts}")
+        logger.debug(f"Dominant color: {dominant_color} with {max_val} pixels ({color_percentage:.3f})")
         
         return dominant_color
     
@@ -411,14 +473,19 @@ class SimpleClothingDetector:
         edges = cv2.Canny(gray, 50, 150)
         edge_density = np.sum(edges > 0) / (edges.shape[0] * edges.shape[1])
         
-        if edge_density > 0.1:
+        # More conservative threshold for pattern detection
+        if edge_density > 0.15:  # Increased from 0.1
             patterns.append("patterned")
+            logger.debug(f"Pattern detected: edge_density={edge_density:.3f}")
         
-        # Check for stripes (horizontal lines)
+        # Check for stripes (horizontal lines) - more conservative
         horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
         horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
-        if np.sum(horizontal_lines) > 1000:
+        horizontal_line_density = np.sum(horizontal_lines) / (edges.shape[0] * edges.shape[1])
+        
+        if horizontal_line_density > 0.02:  # More conservative threshold
             patterns.append("striped")
+            logger.debug(f"Stripes detected: horizontal_line_density={horizontal_line_density:.3f}")
         
         return patterns
     
@@ -434,9 +501,11 @@ class SimpleClothingDetector:
         try:
             # Get dominant color
             color = self.get_dominant_color(person_image)
+            logger.debug(f"Detected color: {color}")
             
             # Detect patterns
             patterns = self.detect_patterns(person_image)
+            logger.debug(f"Detected patterns: {patterns}")
             
             # Build description
             description_parts = []
@@ -449,7 +518,10 @@ class SimpleClothingDetector:
             
             description_parts.append("clothing")
             
-            return " ".join(description_parts)
+            final_description = " ".join(description_parts)
+            logger.debug(f"Final description: {final_description}")
+            
+            return final_description
             
         except Exception as e:
             logger.error(f"Error in simple clothing detection: {e}")
