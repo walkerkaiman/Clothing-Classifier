@@ -10,11 +10,13 @@ from fastapi.staticfiles import StaticFiles
 import cv2  # add import
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 
 OUTPUT_PATH = Path("objects.json")
 STATIC_DIR = Path(__file__).with_suffix("").parent / "static"
 IMAGE_PATH = Path("latest.jpg")
 MODELS_DIR = Path("models")
+CLOTHING_DETECTIONS_PATH = Path("clothing_detections.json")
 
 app = FastAPI(title="Object Monitor UI")
 
@@ -35,10 +37,54 @@ def get_objects():
     if not OUTPUT_PATH.exists():
         return {}
     try:
-        data = json.loads(OUTPUT_PATH.read_text())
+        content = OUTPUT_PATH.read_text()
+        if not content.strip():
+            return {}
+        data = json.loads(content)
+        return data
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        # Return empty data instead of 500 error
+        return {}
+    except Exception as e:
+        # Log the error but return empty data
+        print(f"Error reading objects.json: {e}")
+        return {}
+
+
+@app.get("/clothing.json", response_class=JSONResponse)
+def get_clothing_detections():
+    """Get current clothing detections."""
+    try:
+        # Try to fetch from the clothing detection server first
+        import requests
+        response = requests.get("http://localhost:8001/detections", timeout=1.0)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        # Fallback to file if server is not available
+        pass
+    
+    # Fallback to file-based approach
+    if not CLOTHING_DETECTIONS_PATH.exists():
+        return {"timestamp": "", "detections": []}
+    try:
+        data = json.loads(CLOTHING_DETECTIONS_PATH.read_text())
+    except json.JSONDecodeError as e:
+        return {"timestamp": "", "detections": []}
     return data
+
+
+@app.get("/detections", response_class=JSONResponse)
+def get_all_detections():
+    """Get both object counts and clothing detections."""
+    objects_data = get_objects()
+    clothing_data = get_clothing_detections()
+    
+    return {
+        "objects": objects_data,
+        "clothing": clothing_data,
+        "timestamp": clothing_data.get("timestamp", "")
+    }
 
 
 @app.get("/latest.jpg")
@@ -53,11 +99,39 @@ def latest_image():
 async def mjpeg_stream():
     async def gen():
         boundary = b"frame"
+        last_frame = None
+        
         while True:
-            if IMAGE_PATH.exists():
-                frame = IMAGE_PATH.read_bytes()
-                yield (b"--" + boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+            try:
+                if IMAGE_PATH.exists():
+                    # Try to read the file with retry logic
+                    frame = None
+                    for attempt in range(3):  # Try up to 3 times
+                        try:
+                            frame = IMAGE_PATH.read_bytes()
+                            break
+                        except PermissionError:
+                            # File is being written, wait a bit and retry
+                            await asyncio.sleep(0.01)
+                            continue
+                        except Exception as e:
+                            print(f"Error reading image file: {e}")
+                            break
+                    
+                    if frame and frame != last_frame:
+                        yield (b"--" + boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+                        last_frame = frame
+                    elif last_frame:
+                        # Send the last known good frame if we can't read a new one
+                        yield (b"--" + boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n" + last_frame + b"\r\n")
+                        
+            except Exception as e:
+                print(f"Stream error: {e}")
+                # Send a placeholder frame or continue
+                pass
+                
             await asyncio.sleep(0.05)  # ~20 FPS
+            
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
@@ -74,9 +148,12 @@ def index():
         <style>
           :root { --bg: #1e1e1e; --fg: #e0e0e0; --accent: #00bcd4; }
           html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: "Segoe UI", Arial, sans-serif; }
-          .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+          .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+          .main-layout { display: flex; gap: 2rem; align-items: flex-start; }
+          .left-panel { flex: 1; min-width: 400px; }
+          .right-panel { flex: 1; }
           h1, h2 { color: var(--accent); margin-top: 0; }
-          #cam { width: 100%; border: 2px solid var(--accent); border-radius: 6px; }
+          #cam { width: 100%; max-width: 600px; border: 2px solid var(--accent); border-radius: 6px; }
           table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
           th { text-align: left; background: #2b2b2b; color: var(--accent); }
           th, td { padding: 8px 12px; border-bottom: 1px solid #333; }
@@ -86,27 +163,87 @@ def index():
           button { cursor: pointer; }
           button:hover { background: var(--accent); color: var(--bg); }
           a { color: var(--accent); }
+          .section { margin-bottom: 2rem; }
+          .settings-section { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #333; }
+          
+          /* Scrollable content area */
+          .scrollable-content {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 1rem;
+            background: #252525;
+          }
+          
+          /* Responsive design */
+          @media (max-width: 1200px) {
+            .main-layout { flex-direction: column; }
+            .left-panel, .right-panel { min-width: auto; }
+            #cam { max-width: 100%; }
+          }
+          
+          /* Status indicators */
+          .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+          }
+          .status-active { background-color: #4caf50; }
+          .status-inactive { background-color: #f44336; }
         </style>
       </head>
       <body>
         <div class="container">
-          <h1>Live Objects</h1>
-          <img id="cam" src="/stream" />
-          <table id="obj-table">
-            <thead><tr><th>Object</th><th>Count</th></tr></thead>
-            <tbody></tbody>
-          </table>
+          <h1>Live Objects & Clothing Detection</h1>
+          
+          <div class="main-layout">
+            <!-- Left Panel: Objects and Clothing Data -->
+            <div class="left-panel">
+              <div class="section">
+                <h2>Clothing Detections <span class="status-indicator status-active" id="clothing-status"></span></h2>
+                <div class="scrollable-content">
+                                     <table id="clothing-table">
+                     <thead><tr><th>ID</th><th>Description</th><th>Details</th><th>BBox</th></tr></thead>
+                     <tbody></tbody>
+                   </table>
+                </div>
+              </div>
 
-          <h2>Settings</h2>
-          <form id="settings-form">
-            <label>Camera:
-              <select id="camera" name="camera"></select>
-            </label><br/>
-            <label>Model:
-              <select id="model" name="model"></select>
-            </label><br/>
-            <button type="submit">Change Settings</button>
-          </form>
+              <div class="section">
+                <h2>Object Counts <span class="status-indicator status-active" id="objects-status"></span></h2>
+                <div class="scrollable-content">
+                  <table id="obj-table">
+                    <thead><tr><th>Object</th><th>Count</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Panel: Camera Feed and Settings -->
+            <div class="right-panel">
+              <div class="section">
+                <h2>Live Camera Feed</h2>
+                <img id="cam" src="/stream" />
+              </div>
+
+              <div class="settings-section">
+                <h2>Settings</h2>
+                <form id="settings-form">
+                  <label>Camera:
+                    <select id="camera" name="camera"></select>
+                  </label><br/>
+                  <label>Model:
+                    <select id="model" name="model"></select>
+                  </label><br/>
+                  <button type="submit">Change Settings</button>
+                </form>
+              </div>
+            </div>
+          </div>
         </div>
 
         <script>
@@ -132,18 +269,55 @@ def index():
           });
 
           async function refreshCounts() {
-            const res = await fetch('/objects.json');
-            const data = await res.json();
-            const tbody = document.querySelector('#obj-table tbody');
-            tbody.innerHTML = '';
-            for (const [name, info] of Object.entries(data)) {
-              const row = document.createElement('tr');
-              row.innerHTML = `<td style=\"color:${info.color}\">${name}</td><td>${info.count}</td>`;
-              tbody.appendChild(row);
+            try {
+              const res = await fetch('/objects.json');
+              const data = await res.json();
+              const tbody = document.querySelector('#obj-table tbody');
+              tbody.innerHTML = '';
+              for (const [name, info] of Object.entries(data)) {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td style=\"color:${info.color}\">${name}</td><td>${info.count}</td>`;
+                tbody.appendChild(row);
+              }
+              document.getElementById('objects-status').className = 'status-indicator status-active';
+            } catch (error) {
+              document.getElementById('objects-status').className = 'status-indicator status-inactive';
             }
           }
+
+                     async function refreshClothing() {
+             try {
+               const res = await fetch('/clothing.json');
+               const data = await res.json();
+               const tbody = document.querySelector('#clothing-table tbody');
+               tbody.innerHTML = '';
+               for (const detection of data.detections || []) {
+                 const row = document.createElement('tr');
+                 
+                 // Create detailed clothing breakdown
+                 let detailsHtml = '';
+                 if (detection.clothing_items) {
+                   const details = [];
+                   for (const [region, item] of Object.entries(detection.clothing_items)) {
+                     const regionName = region.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                     details.push(`<strong>${regionName}:</strong> ${item}`);
+                   }
+                   detailsHtml = details.join('<br>');
+                 }
+                 
+                 row.innerHTML = `<td>${detection.id}</td><td>${detection.description}</td><td>${detailsHtml}</td><td>${detection.bbox.join(', ')}</td>`;
+                 tbody.appendChild(row);
+               }
+               document.getElementById('clothing-status').className = 'status-indicator status-active';
+             } catch (error) {
+               document.getElementById('clothing-status').className = 'status-indicator status-inactive';
+             }
+           }
+          
           setInterval(refreshCounts, 200); // 5 times per second
+          setInterval(refreshClothing, 1000); // 1 time per second
           refreshCounts();
+          refreshClothing();
 
           document.getElementById('settings-form').addEventListener('submit', async (e) => {
             e.preventDefault();

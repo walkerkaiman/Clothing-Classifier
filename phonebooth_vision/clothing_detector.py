@@ -1,0 +1,623 @@
+"""Clothing description module using vision-language models.
+
+This module provides functionality to generate descriptive clothing labels
+for detected persons using image captioning models.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+import cv2
+import numpy as np
+from PIL import Image
+import torch
+
+logger = logging.getLogger(__name__)
+
+# Optional imports for advanced clothing detection
+try:
+    from transformers import (
+        AutoProcessor, 
+        AutoModelForVision2Seq,
+        BlipProcessor,
+        BlipForConditionalGeneration
+    )
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    logger.warning("Transformers not available. Advanced clothing detection will not work.")
+
+
+class ClothingDetector:
+    """Generates descriptive clothing labels for detected persons."""
+    
+    def __init__(self, model_name: str = "Salesforce/blip-image-captioning-base", device: Optional[str] = None):
+        """Initialize the clothing detector with a vision-language model.
+        
+        Args:
+            model_name: Name of the vision-language model to use
+            device: Device to run inference on ('cuda', 'cpu', or None for auto)
+        """
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError("Transformers library is required for advanced clothing detection. Install with: pip install transformers")
+        
+        self.model_name = model_name
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Initialize model and processor
+        try:
+            if "blip" in model_name.lower():
+                self.processor = BlipProcessor.from_pretrained(model_name)
+                self.model = BlipForConditionalGeneration.from_pretrained(model_name).to(self.device)
+            else:
+                self.processor = AutoProcessor.from_pretrained(model_name)
+                self.model = AutoModelForVision2Seq.from_pretrained(model_name).to(self.device)
+            
+            logger.info(f"Loaded clothing detection model: {model_name} on {self.device}")
+        except Exception as e:
+            logger.error(f"Failed to load model {model_name}: {e}")
+            raise
+    
+    def crop_person(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+        """Crop a person from the frame using the bounding box.
+        
+        Args:
+            frame: Input frame as numpy array
+            bbox: Bounding box as (x1, y1, x2, y2)
+            
+        Returns:
+            Cropped person image
+        """
+        x1, y1, x2, y2 = bbox
+        # Ensure coordinates are within frame bounds
+        h, w = frame.shape[:2]
+        x1 = max(0, min(x1, w))
+        y1 = max(0, min(y1, h))
+        x2 = max(0, min(x2, w))
+        y2 = max(0, min(y2, h))
+        
+        # Ensure valid crop dimensions
+        if x2 <= x1 or y2 <= y1:
+            return np.zeros((224, 224, 3), dtype=np.uint8)
+        
+        cropped = frame[y1:y2, x1:x2]
+        
+        # Resize to standard size for model input
+        cropped = cv2.resize(cropped, (224, 224))
+        return cropped
+    
+    def segment_person_regions(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Dict[str, np.ndarray]:
+        """Segment a person into different body regions for detailed clothing analysis.
+        
+        Args:
+            frame: Input frame as numpy array
+            bbox: Bounding box as (x1, y1, x2, y2)
+            
+        Returns:
+            Dictionary of region crops: {'upper_body', 'lower_body', 'head', 'full_body'}
+        """
+        x1, y1, x2, y2 = bbox
+        h, w = frame.shape[:2]
+        
+        # Ensure coordinates are within frame bounds
+        x1 = max(0, min(x1, w))
+        y1 = max(0, min(y1, h))
+        x2 = max(0, min(x2, w))
+        y2 = max(0, min(y2, h))
+        
+        if x2 <= x1 or y2 <= y1:
+            return {}
+        
+        person_height = y2 - y1
+        person_width = x2 - x1
+        
+        regions = {}
+        
+        # Full body (original crop)
+        regions['full_body'] = cv2.resize(frame[y1:y2, x1:x2], (224, 224))
+        
+        # Head region (top 25% of person)
+        head_height = int(person_height * 0.25)
+        head_y1 = y1
+        head_y2 = min(y1 + head_height, y2)
+        if head_y2 > head_y1:
+            regions['head'] = cv2.resize(frame[head_y1:head_y2, x1:x2], (224, 224))
+        
+        # Upper body (25% to 60% of person height)
+        upper_y1 = y1 + int(person_height * 0.25)
+        upper_y2 = y1 + int(person_height * 0.60)
+        if upper_y2 > upper_y1:
+            regions['upper_body'] = cv2.resize(frame[upper_y1:upper_y2, x1:x2], (224, 224))
+        
+        # Lower body (60% to bottom)
+        lower_y1 = y1 + int(person_height * 0.60)
+        lower_y2 = y2
+        if lower_y2 > lower_y1:
+            regions['lower_body'] = cv2.resize(frame[lower_y1:lower_y2, x1:x2], (224, 224))
+        
+        return regions
+    
+    def generate_clothing_description(self, person_image: np.ndarray) -> str:
+        """Generate a clothing description for a person image.
+        
+        Args:
+            person_image: Cropped person image as numpy array
+            
+        Returns:
+            Descriptive clothing label
+        """
+        try:
+            # Convert numpy array to PIL Image
+            pil_image = Image.fromarray(cv2.cvtColor(person_image, cv2.COLOR_BGR2RGB))
+            
+            # Prepare inputs for the model
+            if "blip" in self.model_name.lower():
+                inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
+                
+                # Generate caption with clothing-specific prompt
+                prompt = "Describe the person's clothing in detail:"
+                inputs["text"] = self.processor(prompt, return_tensors="pt").input_ids.to(self.device)
+                
+                outputs = self.model.generate(
+                    **inputs,
+                    max_length=50,
+                    num_beams=5,
+                    early_stopping=True,
+                    do_sample=False
+                )
+                
+                caption = self.processor.decode(outputs[0], skip_special_tokens=True)
+            else:
+                # Generic vision-language model approach
+                inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
+                
+                outputs = self.model.generate(
+                    **inputs,
+                    max_length=50,
+                    num_beams=5,
+                    early_stopping=True,
+                    do_sample=False
+                )
+                
+                caption = self.processor.decode(outputs[0], skip_special_tokens=True)
+            
+            # Clean and enhance the description
+            description = self._enhance_clothing_description(caption)
+            return description
+            
+        except Exception as e:
+            logger.error(f"Error generating clothing description: {e}")
+            return "clothing not visible"
+    
+    def generate_detailed_clothing_description(self, regions: Dict[str, np.ndarray]) -> Dict[str, str]:
+        """Generate detailed clothing descriptions for each body region.
+        
+        Args:
+            regions: Dictionary of body region crops
+            
+        Returns:
+            Dictionary of clothing descriptions for each region
+        """
+        clothing_items = {}
+        
+        try:
+            # Analyze upper body (shirts, jackets, etc.)
+            if 'upper_body' in regions:
+                upper_desc = self.generate_clothing_description(regions['upper_body'])
+                if upper_desc and upper_desc != "clothing not visible":
+                    clothing_items['upper_body'] = upper_desc
+            
+            # Analyze lower body (pants, skirts, etc.)
+            if 'lower_body' in regions:
+                lower_desc = self.generate_clothing_description(regions['lower_body'])
+                if lower_desc and lower_desc != "clothing not visible":
+                    clothing_items['lower_body'] = lower_desc
+            
+            # Analyze head region (hats, accessories)
+            if 'head' in regions:
+                head_desc = self.generate_clothing_description(regions['head'])
+                if head_desc and head_desc != "clothing not visible":
+                    clothing_items['head'] = head_desc
+            
+            # If no specific regions detected, use full body
+            if not clothing_items and 'full_body' in regions:
+                full_desc = self.generate_clothing_description(regions['full_body'])
+                if full_desc and full_desc != "clothing not visible":
+                    clothing_items['full_body'] = full_desc
+            
+        except Exception as e:
+            logger.error(f"Error generating detailed clothing descriptions: {e}")
+            # Fallback to full body description
+            if 'full_body' in regions:
+                clothing_items['full_body'] = self.generate_clothing_description(regions['full_body'])
+        
+        return clothing_items
+    
+    def _enhance_clothing_description(self, caption: str) -> str:
+        """Enhance and clean the clothing description.
+        
+        Args:
+            caption: Raw caption from the model
+            
+        Returns:
+            Enhanced clothing description
+        """
+        # Convert to lowercase and clean up
+        description = caption.lower().strip()
+        
+        # Remove common non-clothing words
+        remove_words = [
+            "person", "man", "woman", "boy", "girl", "individual", "someone",
+            "standing", "sitting", "looking", "posing", "wearing", "has", "is"
+        ]
+        
+        for word in remove_words:
+            description = description.replace(word, "").replace("  ", " ")
+        
+        # Add clothing-specific enhancements
+        if "shirt" in description or "t-shirt" in description:
+            if "long sleeve" not in description and "short sleeve" not in description:
+                description = description.replace("shirt", "short sleeve shirt")
+        
+        # Clean up extra spaces and punctuation
+        description = " ".join(description.split())
+        description = description.strip("., ")
+        
+        # If description is too short, add generic clothing terms
+        if len(description.split()) < 2:
+            description = "casual clothing"
+        
+        return description
+    
+    def process_detections(self, frame: np.ndarray, detections: List[Tuple[Tuple[int, int, int, int], str]]) -> List[Dict[str, Any]]:
+        """Process all person detections and generate detailed clothing descriptions.
+        
+        Args:
+            frame: Input frame
+            detections: List of (bbox, class_name) tuples from YOLO
+            
+        Returns:
+            List of detection dictionaries with detailed clothing descriptions
+        """
+        results = []
+        
+        for i, (bbox, class_name) in enumerate(detections):
+            if class_name.lower() == "person":
+                # Segment person into body regions
+                regions = self.segment_person_regions(frame, bbox)
+                
+                # Generate detailed clothing descriptions for each region
+                clothing_items = self.generate_detailed_clothing_description(regions)
+                
+                # Combine clothing items into a structured description
+                clothing_desc = self._combine_clothing_descriptions(clothing_items)
+                
+                # Create detection result with detailed clothing information
+                detection_result = {
+                    "id": i + 1,
+                    "bbox": list(bbox),
+                    "class": class_name,
+                    "description": clothing_desc,
+                    "clothing_items": clothing_items,  # Detailed breakdown
+                    "timestamp": time.time()
+                }
+                
+                results.append(detection_result)
+        
+        return results
+    
+    def _combine_clothing_descriptions(self, clothing_items: Dict[str, str]) -> str:
+        """Combine individual clothing item descriptions into a coherent description.
+        
+        Args:
+            clothing_items: Dictionary of clothing descriptions by body region
+            
+        Returns:
+            Combined clothing description
+        """
+        if not clothing_items:
+            return "clothing not visible"
+        
+        # Build description from different regions
+        description_parts = []
+        
+        # Add upper body items
+        if 'upper_body' in clothing_items:
+            description_parts.append(clothing_items['upper_body'])
+        
+        # Add lower body items
+        if 'lower_body' in clothing_items:
+            description_parts.append(clothing_items['lower_body'])
+        
+        # Add head accessories
+        if 'head' in clothing_items:
+            description_parts.append(clothing_items['head'])
+        
+        # If we have specific regions, use them; otherwise use full body
+        if description_parts:
+            return ", ".join(description_parts)
+        elif 'full_body' in clothing_items:
+            return clothing_items['full_body']
+        else:
+            return "clothing not visible"
+
+
+class SimpleClothingDetector:
+    """Simplified clothing detector using basic color and pattern analysis."""
+    
+    def __init__(self):
+        """Initialize the simple clothing detector."""
+        self.color_names = {
+            'red': ([0, 50, 50], [10, 255, 255]),
+            'orange': ([10, 50, 50], [25, 255, 255]),
+            'yellow': ([25, 50, 50], [35, 255, 255]),
+            'green': ([35, 50, 50], [85, 255, 255]),
+            'blue': ([85, 50, 50], [130, 255, 255]),
+            'purple': ([130, 50, 50], [170, 255, 255]),
+            'pink': ([170, 50, 50], [180, 255, 255]),
+            'white': ([0, 0, 200], [180, 30, 255]),
+            'gray': ([0, 0, 100], [180, 30, 200]),
+            'black': ([0, 0, 0], [180, 255, 30]),
+            'brown': ([10, 50, 20], [20, 255, 200])
+        }
+    
+    def get_dominant_color(self, image: np.ndarray) -> str:
+        """Get the dominant color in an image.
+        
+        Args:
+            image: Input image as numpy array
+            
+        Returns:
+            Dominant color name
+        """
+        # Convert to HSV
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        
+        # Calculate color histogram
+        hist = cv2.calcHist([hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+        
+        # Find dominant color
+        max_val = 0
+        dominant_color = "unknown"
+        
+        for color_name, (lower, upper) in self.color_names.items():
+            mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+            color_pixels = cv2.countNonZero(mask)
+            
+            if color_pixels > max_val:
+                max_val = color_pixels
+                dominant_color = color_name
+        
+        return dominant_color
+    
+    def detect_patterns(self, image: np.ndarray) -> List[str]:
+        """Detect basic patterns in the image.
+        
+        Args:
+            image: Input image as numpy array
+            
+        Returns:
+            List of detected patterns
+        """
+        patterns = []
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Edge detection for pattern analysis
+        edges = cv2.Canny(gray, 50, 150)
+        edge_density = np.sum(edges > 0) / (edges.shape[0] * edges.shape[1])
+        
+        if edge_density > 0.1:
+            patterns.append("patterned")
+        
+        # Check for stripes (horizontal lines)
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
+        horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
+        if np.sum(horizontal_lines) > 1000:
+            patterns.append("striped")
+        
+        return patterns
+    
+    def generate_simple_description(self, person_image: np.ndarray) -> str:
+        """Generate a simple clothing description based on color and patterns.
+        
+        Args:
+            person_image: Cropped person image
+            
+        Returns:
+            Simple clothing description
+        """
+        try:
+            # Get dominant color
+            color = self.get_dominant_color(person_image)
+            
+            # Detect patterns
+            patterns = self.detect_patterns(person_image)
+            
+            # Build description
+            description_parts = []
+            
+            if patterns:
+                description_parts.extend(patterns)
+            
+            if color != "unknown":
+                description_parts.append(color)
+            
+            description_parts.append("clothing")
+            
+            return " ".join(description_parts)
+            
+        except Exception as e:
+            logger.error(f"Error in simple clothing detection: {e}")
+            return "casual clothing"
+    
+    def process_detections(self, frame: np.ndarray, detections: List[Tuple[Tuple[int, int, int, int], str]]) -> List[Dict[str, Any]]:
+        """Process all person detections with simple clothing analysis.
+        
+        Args:
+            frame: Input frame
+            detections: List of (bbox, class_name) tuples from YOLO
+            
+        Returns:
+            List of detection dictionaries with clothing descriptions
+        """
+        results = []
+        
+        for i, (bbox, class_name) in enumerate(detections):
+            if class_name.lower() == "person":
+                # Segment person into body regions
+                regions = self.segment_person_regions(frame, bbox)
+                
+                # Generate detailed clothing descriptions for each region
+                clothing_items = self.generate_detailed_simple_description(regions)
+                
+                # Combine clothing items into a structured description
+                clothing_desc = self._combine_clothing_descriptions(clothing_items)
+                
+                # Create detection result with detailed clothing information
+                detection_result = {
+                    "id": i + 1,
+                    "bbox": list(bbox),
+                    "class": class_name,
+                    "description": clothing_desc,
+                    "clothing_items": clothing_items,  # Detailed breakdown
+                    "timestamp": time.time()
+                }
+                
+                results.append(detection_result)
+        
+        return results
+    
+    def segment_person_regions(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Dict[str, np.ndarray]:
+        """Segment a person into different body regions for detailed clothing analysis.
+        
+        Args:
+            frame: Input frame as numpy array
+            bbox: Bounding box as (x1, y1, x2, y2)
+            
+        Returns:
+            Dictionary of region crops: {'upper_body', 'lower_body', 'head', 'full_body'}
+        """
+        x1, y1, x2, y2 = bbox
+        h, w = frame.shape[:2]
+        
+        # Ensure coordinates are within frame bounds
+        x1 = max(0, min(x1, w))
+        y1 = max(0, min(y1, h))
+        x2 = max(0, min(x2, w))
+        y2 = max(0, min(y2, h))
+        
+        if x2 <= x1 or y2 <= y1:
+            return {}
+        
+        person_height = y2 - y1
+        person_width = x2 - x1
+        
+        regions = {}
+        
+        # Full body (original crop)
+        regions['full_body'] = cv2.resize(frame[y1:y2, x1:x2], (224, 224))
+        
+        # Head region (top 25% of person)
+        head_height = int(person_height * 0.25)
+        head_y1 = y1
+        head_y2 = min(y1 + head_height, y2)
+        if head_y2 > head_y1:
+            regions['head'] = cv2.resize(frame[head_y1:head_y2, x1:x2], (224, 224))
+        
+        # Upper body (25% to 60% of person height)
+        upper_y1 = y1 + int(person_height * 0.25)
+        upper_y2 = y1 + int(person_height * 0.60)
+        if upper_y2 > upper_y1:
+            regions['upper_body'] = cv2.resize(frame[upper_y1:upper_y2, x1:x2], (224, 224))
+        
+        # Lower body (60% to bottom)
+        lower_y1 = y1 + int(person_height * 0.60)
+        lower_y2 = y2
+        if lower_y2 > lower_y1:
+            regions['lower_body'] = cv2.resize(frame[lower_y1:lower_y2, x1:x2], (224, 224))
+        
+        return regions
+    
+    def generate_detailed_simple_description(self, regions: Dict[str, np.ndarray]) -> Dict[str, str]:
+        """Generate detailed clothing descriptions for each body region using simple analysis.
+        
+        Args:
+            regions: Dictionary of body region crops
+            
+        Returns:
+            Dictionary of clothing descriptions for each region
+        """
+        clothing_items = {}
+        
+        try:
+            # Analyze upper body (shirts, jackets, etc.)
+            if 'upper_body' in regions:
+                upper_desc = self.generate_simple_description(regions['upper_body'])
+                if upper_desc and upper_desc != "casual clothing":
+                    clothing_items['upper_body'] = upper_desc
+            
+            # Analyze lower body (pants, skirts, etc.)
+            if 'lower_body' in regions:
+                lower_desc = self.generate_simple_description(regions['lower_body'])
+                if lower_desc and lower_desc != "casual clothing":
+                    clothing_items['lower_body'] = lower_desc
+            
+            # Analyze head region (hats, accessories)
+            if 'head' in regions:
+                head_desc = self.generate_simple_description(regions['head'])
+                if head_desc and head_desc != "casual clothing":
+                    clothing_items['head'] = head_desc
+            
+            # If no specific regions detected, use full body
+            if not clothing_items and 'full_body' in regions:
+                full_desc = self.generate_simple_description(regions['full_body'])
+                if full_desc and full_desc != "casual clothing":
+                    clothing_items['full_body'] = full_desc
+            
+        except Exception as e:
+            logger.error(f"Error generating detailed simple clothing descriptions: {e}")
+            # Fallback to full body description
+            if 'full_body' in regions:
+                clothing_items['full_body'] = self.generate_simple_description(regions['full_body'])
+        
+        return clothing_items
+    
+    def _combine_clothing_descriptions(self, clothing_items: Dict[str, str]) -> str:
+        """Combine individual clothing item descriptions into a coherent description.
+        
+        Args:
+            clothing_items: Dictionary of clothing descriptions by body region
+            
+        Returns:
+            Combined clothing description
+        """
+        if not clothing_items:
+            return "casual clothing"
+        
+        # Build description from different regions
+        description_parts = []
+        
+        # Add upper body items
+        if 'upper_body' in clothing_items:
+            description_parts.append(clothing_items['upper_body'])
+        
+        # Add lower body items
+        if 'lower_body' in clothing_items:
+            description_parts.append(clothing_items['lower_body'])
+        
+        # Add head accessories
+        if 'head' in clothing_items:
+            description_parts.append(clothing_items['head'])
+        
+        # If we have specific regions, use them; otherwise use full body
+        if description_parts:
+            return ", ".join(description_parts)
+        elif 'full_body' in clothing_items:
+            return clothing_items['full_body']
+        else:
+            return "casual clothing"
