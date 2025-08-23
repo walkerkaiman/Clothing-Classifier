@@ -1,0 +1,12 @@
+pyproject.toml
+phonebooth_vision/__init__.py
+phonebooth_vision/http_server.py
+phonebooth_vision/simple_monitor.py
+phonebooth_vision.egg-info/PKG-INFO
+phonebooth_vision.egg-info/SOURCES.txt
+phonebooth_vision.egg-info/dependency_links.txt
+phonebooth_vision.egg-info/requires.txt
+phonebooth_vision.egg-info/top_level.txt
+phonebooth_vision/config/__init__.py
+phonebooth_vision/config/manager.py
+phonebooth_vision/config/models.py

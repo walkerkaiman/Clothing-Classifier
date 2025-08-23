@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: phonebooth-vision
+Version: 0.1.0
+Summary: Local privacy-preserving computer vision service for phonebooth.
+Author-email: Phonebooth Vision Team <dev@example.com>
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn[standard]>=0.29
+Requires-Dist: pydantic>=2.6
+Requires-Dist: opencv-python>=4.10
+Requires-Dist: ultralytics>=8.2
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: tomli>=2.0
+Requires-Dist: typer>=0.9
+Requires-Dist: watchdog>=3.0
+Requires-Dist: httpx>=0.27
