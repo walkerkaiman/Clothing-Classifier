@@ -1,0 +1,482 @@
+Phonebooth Vision — Design Document (Locked to YOLOv8-s fine-tuned on DeepFashion2)
+1) Executive Summary
+
+Build a local, privacy-preserving computer-vision service for a phonebooth. It uses a webcam (or other local video input) to detect clothing items people are wearing and accessories covered by DeepFashion2, and continuously serves a local JSON file listing item names and counts. A minimal web UI (Settings/Config page) lets an operator select the video input, port, thresholds, and runtime options. The system ships with one model only: YOLOv8-s fine-tuned on DeepFashion2.
+
+2) Scope
+
+In-scope
+
+Real-time detection of clothing categories supported by DeepFashion2.
+
+Local HTTP server:
+
+GET /objects.json: live counts and metadata.
+
+REST API for status & configuration.
+
+Static web UI for operator control (Settings/Config page).
+
+Robust operation: automatic camera recovery, atomic JSON writes, structured logging.
+
+Out-of-scope
+
+Identity/biometric inference (face recognition, age/race).
+
+Cloud connectivity (no uploads/telemetry by default).
+
+Multiple model choices (exactly one pre-verified model).
+
+3) Model & Dataset (Single Option)
+
+Model (only option):
+
+YOLOv8-s (Ultralytics) fine-tuned on DeepFashion2
+
+Good speed/accuracy balance for edge devices.
+
+Input size default: 640×640 (configurable).
+
+Weights stored locally and verified via SHA-256 on startup.
+
+Dataset:
+
+DeepFashion2 clothing taxonomy (13 main categories, plus variations).
+Examples (exact names may vary slightly by release): short_sleeve_top, long_sleeve_top, short_sleeve_outwear, long_sleeve_outwear, vest, sling, shorts, trousers, skirt, short_sleeve_dress, long_sleeve_dress, vest_dress, sling_dress.
+
+Note: COCO-style accessories (umbrella, suitcase, tie, backpack) are not guaranteed. This system optimizes for clothing. If a class is not present in the model, it will never appear in counts.
+
+4) Output: JSON Schema
+
+GET /objects.json returns the current snapshot (also periodically written to data/objects.json):
+
+{
+  "timestamp": "2025-08-22T19:01:21.345Z",
+  "source": {
+    "device_name": "Logitech C920",
+    "device_id": 0,
+    "resolution": [1280, 720],
+    "fps": 22.5
+  },
+  "model": {
+    "name": "yolov8s_deepfashion2",
+    "version": "1.0.0",
+    "input_size": [640, 640],
+    "dataset": "deepfashion2",
+    "class_filter": [
+      "short_sleeve_top","long_sleeve_top","short_sleeve_outwear","long_sleeve_outwear",
+      "vest","sling","shorts","trousers","skirt","short_sleeve_dress",
+      "long_sleeve_dress","vest_dress","sling_dress"
+    ]
+  },
+  "counts": {
+    "short_sleeve_top": 1,
+    "trousers": 1,
+    "skirt": 0,
+    "long_sleeve_outwear": 0
+  },
+  "confidence_threshold": 0.35,
+  "aggregation_window_sec": 2.0,
+  "latency_ms": 41.7
+}
+
+
+Notes
+
+Only classes in class_filter are tracked.
+
+Counts are temporally smoothed (EMA) over aggregation_window_sec.
+
+5) Architecture
+
+Single executable service with three subsystems:
+
+Inference Pipeline
+
+Video capture (OpenCV/GStreamer) → preprocessing → YOLOv8-s inference → postprocess (NMS + class filter) → temporal aggregation → publish to State Store.
+
+Web Server (FastAPI/Starlette)
+
+Serves /objects.json, /health, /devices, /config (GET/POST), /logs.
+
+Serves static Settings/Config web UI.
+
+State & Persistence
+
+In-memory State Store (thread-safe) holding the latest snapshot.
+
+Background writer task periodically writes data/objects.json atomically.
+
+Key Components
+
+Config Manager (Pydantic): load/validate/hot-apply config from TOML/JSON.
+
+Model Loader: validates SHA-256, loads Ultralytics YOLOv8-s weights.
+
+Device Manager: enumerates camera devices & caps (name, id, resolutions).
+
+Logging: JSON logs with rotation; health metrics on /health.
+
+6) Settings/Config Page (Web UI)
+
+Purpose: A single page that lets an operator configure & monitor the system safely.
+
+Layout
+
+Header
+
+App name + version
+
+Status pill: Healthy / Degraded / Error (based on /health)
+
+FPS, latency, last write time for /objects.json
+
+Video Settings
+
+Video Input (dropdown): populated by GET /devices
+
+Show name (id) for each device.
+
+Resolution (dropdown): common options; filter by what the device advertises (if caps available) or show safe presets (e.g., 640×480, 1280×720, 1920×1080).
+
+Target FPS (dropdown or numeric with guardrails).
+
+Preview: optional toggle to show current camera feed (JPEG snapshots via GET /snapshot or MJPEG stream at low rate).
+
+Model Settings (informational + thresholds)
+
+Model: fixed, read-only label: “YOLOv8-s (DeepFashion2)”.
+
+Input Size: 640 (default) — dropdown 416/512/640/768.
+
+Confidence Threshold: slider 0.10–0.70 (default 0.35).
+
+NMS IoU: slider 0.3–0.7 (default 0.5).
+
+Class Filter: checklist of DeepFashion2 classes (all checked by default).
+
+Server Settings
+
+HTTP Port: numeric (1024–49151), default 8080.
+
+Bind Address: dropdown: 127.0.0.1 (default) or 0.0.0.0 (LAN).
+
+Write Interval (ms) for objects.json: numeric (e.g., 250–2000).
+
+Write Path: text (default data/objects.json) with directory existence check.
+
+Persistence & Privacy
+
+Record Debug Video: toggle (off by default) with retention days & directory.
+
+Anonymize Overlays: toggle to avoid saving frames with overlays if recording.
+
+Actions
+
+Save & Apply (primary): POSTs changes to /config, shows toast if success.
+
+Revert Unsaved (secondary): reloads current server config.
+
+Export Config: downloads current config as JSON/TOML.
+
+Restart Capture: restarts capture thread without restarting server.
+
+Live Counters
+
+Table: class | count auto-refresh (poll /objects.json every 500–1000 ms).
+
+Optional sparkline per class (counts/min).
+
+Logs
+
+Tail view of last N lines from GET /logs?tail=200 with level filter.
+
+UX Rules
+
+Disable Save & Apply if validation fails client-side.
+
+Show diff of pending changes (before applying).
+
+Inline errors for invalid port, path, or out-of-range thresholds.
+
+All changes applied transactionally on the server (rollback on failure).
+
+7) API Specification
+
+GET /health
+
+200 OK: { "status":"ok","uptime_sec":1234,"fps":21.7,"latency_ms":41.2,"camera":{"device_id":0,"open":true}}
+
+GET /devices
+
+200 OK: [{"id":0,"name":"Logitech C920"}, {"id":1,"name":"USB Camera"}]
+
+GET /config
+
+Returns current validated config (see schema below).
+
+POST /config
+
+Body: partial or full config.
+
+Server validates; if valid, atomically swaps runtime config; responds with new config.
+
+On failure: 400 with error details; runtime remains unchanged.
+
+GET /objects.json
+
+Snapshot described in Section 4.
+
+GET /logs?tail=200&level=info
+
+Returns recent structured log lines.
+
+GET /snapshot (optional)
+
+Returns a low-rate JPEG snapshot for UI preview.
+
+8) Configuration Schema (Pydantic/TOML)
+
+Default config/app.toml:
+
+[server]
+port = 8080
+bind = "127.0.0.1"
+write_json_path = "data/objects.json"
+write_interval_ms = 500
+
+[video]
+device_id = 0
+resolution = [1280, 720]
+fps = 30
+backend = "auto"  # "auto" | "dshow" | "v4l2" | "avfoundation" | "gstreamer"
+
+[model]
+name = "yolov8s_deepfashion2"  # informational; fixed
+weights_path = "models/yolov8s_deepfashion2.pt"
+input_size = [640, 640]
+confidence_threshold = 0.35
+nms_iou = 0.5
+class_filter = [
+  "short_sleeve_top","long_sleeve_top","short_sleeve_outwear","long_sleeve_outwear",
+  "vest","sling","shorts","trousers","skirt","short_sleeve_dress",
+  "long_sleeve_dress","vest_dress","sling_dress"
+]
+
+[aggregation]
+window_sec = 2.0
+min_persistence_frames = 2
+
+[privacy]
+debug_record = false
+record_dir = "data/recordings"
+retain_days = 2
+
+[logging]
+level = "INFO"
+
+
+Validation rules
+
+server.port ∈ [1024, 49151]
+
+server.write_json_path must be writable; writes are atomic (temp file + rename).
+
+video.resolution from a safe set if device caps unknown; otherwise restricted to supported caps.
+
+model.weights_path must exist and match SHA-256 in registry/models.toml.
+
+9) Registry (Fixed, one entry)
+
+registry/models.toml:
+
+[[models]]
+key = "yolov8s_deepfashion2"
+name = "YOLOv8-s (DeepFashion2)"
+framework = "ultralytics"
+weights_path = "models/yolov8s_deepfashion2.pt"
+hash_sha256 = "<FILL DURING PACKAGING>"
+input_size = [640, 640]
+classes = "deepfashion2"
+default = true
+
+
+On startup:
+
+Compute SHA-256 of weights_path; must match hash_sha256 or fail fast with clear error.
+
+10) Inference Pipeline
+
+Capture Thread
+
+Open device with requested backend; retry with backoff if it fails.
+
+Bounded queue; drop oldest when full.
+
+Preprocess
+
+Resize/letterbox to input_size, normalize per YOLOv8 expectations.
+
+Inference
+
+Ultralytics YOLOv8 API; device auto-select: cuda → mps → cpu.
+
+Optional half precision on CUDA.
+
+Postprocess
+
+Apply confidence threshold & NMS IoU.
+
+Map model class IDs → canonical DeepFashion2 names.
+
+Filter by class_filter.
+
+Temporal Aggregation
+
+EMA over window_sec, min_persistence_frames to reduce flicker.
+
+Publish
+
+Update State Store atomically with counts, timing, and metadata.
+
+11) Directory Layout
+phonebooth-vision/
+  app/
+    __init__.py
+    main.py
+    config.py
+    model_loader.py
+    devices.py
+    inference/
+      detector.py
+      pipeline.py
+      classes.py
+    server/
+      api.py
+      state.py
+      writer.py
+      ui/           # built Settings/Config SPA assets
+    utils/
+      logging.py
+      errors.py
+      metrics.py
+  models/
+    yolov8s_deepfashion2.pt
+  registry/
+    models.toml
+  config/
+    app.toml
+  data/
+    objects.json
+  tests/
+    test_config.py
+    test_registry.py
+    test_devices.py
+    test_detector.py
+    test_api.py
+  scripts/
+    verify_hashes.py
+  README.md
+  LICENSE
+
+12) Production Hardening
+
+Atomic JSON writes (temp + rename).
+
+Structured logging with rotating files.
+
+Graceful hot-apply of config: validate → swap; rollback on error.
+
+Watchdog: camera reopen on failure with exponential backoff.
+
+Metrics on /health: FPS, latency, queue depth, last write time.
+
+Dependency pinning with lock file; model hash verification on start.
+
+13) Performance Targets & Tuning
+
+CPU-only: ≥5–10 FPS @ 640 on a modern desktop CPU.
+
+Entry GPU (RTX 3050 class): ≥20 FPS @ 640.
+
+Tunables: input_size, confidence_threshold, frame skip (e.g., process every 2nd frame), CUDA FP16.
+
+14) Privacy & Safety
+
+Local only by default (127.0.0.1 bind).
+
+No raw frame storage unless debug_record=true.
+
+No PII/biometric tasks; display a UI notice clarifying this.
+
+15) Testing Strategy
+
+Unit: config validation, registry hash check, class mapping.
+
+Integration: fake camera source → expected counts; hot-apply of config.
+
+Resilience: unplug camera, corrupt weights hash, invalid write path.
+
+Performance: time per stage; FPS under load.
+
+UI smoke: load UI, enumerate devices, change thresholds, see /objects.json update.
+
+16) Deployment & Run
+
+Runtime: Python 3.11+, FastAPI, Ultralytics, OpenCV.
+
+Start: python -m app.main (dev) or uvicorn app.main:app --host 127.0.0.1 --port 8080
+
+Service: systemd/Windows service with auto-restart.
+
+Artifacts: ship models/yolov8s_deepfashion2.pt + registry/models.toml with hash preset.
+
+17) Implementation Steps (for the AI Agent)
+
+Scaffold repo (Section 11) + pyproject.toml/requirements.txt.
+
+Implement Config Manager with Pydantic and defaults (Section 8).
+
+Implement Registry loader + SHA-256 validation.
+
+Implement Device Manager for cross-platform enumeration.
+
+Implement YOLOv8 loader/wrapper with uniform predict(frame) API.
+
+Implement classes.py with DeepFashion2 canonical names + ID map.
+
+Build Pipeline: capture thread, queue, inference loop, aggregation, state publish.
+
+Implement State Store and JSON Writer (atomic writes).
+
+Implement API endpoints (Section 7) and serve static UI.
+
+Build Settings/Config UI (Section 6) as a small SPA and bundle to server/ui/.
+
+Add logging/metrics, /health, and watchdog behaviors.
+
+Write tests (Section 15). Ensure CI runs lint + tests.
+
+Package with example config and README.
+
+18) Acceptance Criteria
+
+Starts with defaults, opens camera, and produces /objects.json at least 2×/sec.
+
+Settings page can change device, resolution, thresholds, port, and apply without restart.
+
+Model hash mismatch prevents startup with clear error.
+
+Camera unplug/replug is recovered automatically (no manual restart).
+
+No network exposure unless bind changes to 0.0.0.0.
+
+Quick Notes to the Implementer
+
+Keep the model choice hard-coded via registry (one entry).
+
+Do not fetch models at runtime; include weights in the installer/package.
+
+Favor simple, boring tech that’s easy to maintain (FastAPI + Ultralytics + OpenCV).
+
+Prefer immutability and transactional updates for reliability.
