@@ -39,38 +39,115 @@ class ClothingDetector:
         self.config = config or {}
         
         # Clothing item to body area mapping
+        # BLIP can detect a wide variety of clothing items, accessories, and personal features.
+        # This lookup table maps detected items to appropriate body areas for categorization.
+        # BLIP is trained on diverse datasets and can recognize:
+        # - Specific clothing items (e.g., "blue t-shirt", "black jeans")
+        # - Clothing styles (e.g., "formal wear", "casual clothes")
+        # - Materials and patterns (e.g., "cotton shirt", "plaid pattern")
+        # - Personal features (e.g., "beard", "long hair", "glasses")
+        # - Accessories (e.g., "earrings", "necklace", "watch")
+        # - Colors and descriptions (e.g., "red dress", "striped shirt")
         self.clothing_lookup = {
-            # Head items
+            # Head items (including facial features and accessories)
             'head': [
+                # Hats and head coverings
                 'hat', 'cap', 'beanie', 'headband', 'scarf', 'bandana', 'helmet', 'crown', 'tiara',
-                'headphones', 'earmuffs', 'sunglasses', 'glasses', 'mask', 'face mask', 'balaclava',
-                'hood', 'hair', 'wig', 'turban', 'hijab', 'veil', 'bonnet', 'beret',
-                'fedora', 'baseball cap', 'cowboy hat', 'top hat', 'beanie hat', 'winter hat'
+                'fedora', 'baseball cap', 'cowboy hat', 'top hat', 'beanie hat', 'winter hat',
+                'turban', 'hijab', 'veil', 'bonnet', 'beret', 'hood', 'head covering',
+                
+                # Eyewear and face accessories
+                'sunglasses', 'glasses', 'eyeglasses', 'reading glasses', 'mask', 'face mask', 
+                'balaclava', 'headphones', 'earmuffs', 'earrings', 'earring',
+                
+                # Hair and facial features
+                'hair', 'wig', 'beard', 'mustache', 'goatee', 'facial hair', 'stubble',
+                'long hair', 'short hair', 'curly hair', 'straight hair', 'blonde hair',
+                'brown hair', 'black hair', 'red hair', 'gray hair', 'white hair',
+                'bald', 'balding', 'ponytail', 'braids', 'dreadlocks', 'afro',
+                
+                # Other head accessories
+                'headband', 'hair clip', 'hair tie', 'bobby pin', 'hair accessory'
             ],
             # Upper body items
             'upper_body': [
-                'shirt', 't-shirt', 'tshirt', 'blouse', 'sweater', 'jacket', 'coat', 'hoodie',
-                'sweatshirt', 'cardigan', 'vest', 'tank top', 'polo', 'dress shirt', 'button down',
-                'flannel', 'denim jacket', 'leather jacket', 'blazer', 'suit jacket', 'windbreaker',
-                'rain jacket', 'winter coat', 'puffer jacket', 'bomber jacket', 'turtleneck',
-                'long sleeve', 'short sleeve', 'sleeveless', 'crop top', 'tube top', 'halter top',
-                'bra', 'undershirt', 'thermal', 'fleece', 'pullover', 'jersey', 'uniform'
+                # Shirts and tops
+                'shirt', 't-shirt', 'tshirt', 'blouse', 'sweater', 'tank top', 'polo', 
+                'dress shirt', 'button down', 'button-up', 'button up', 'long sleeve', 
+                'short sleeve', 'sleeveless', 'crop top', 'tube top', 'halter top',
+                'camisole', 'tunic', 'tank', 'muscle shirt', 'wife beater',
+                
+                # Jackets and outerwear
+                'jacket', 'coat', 'hoodie', 'sweatshirt', 'cardigan', 'vest', 'blazer',
+                'suit jacket', 'windbreaker', 'rain jacket', 'winter coat', 'puffer jacket',
+                'bomber jacket', 'denim jacket', 'leather jacket', 'flannel', 'fleece',
+                'pullover', 'jersey', 'uniform', 'work shirt', 'dress shirt',
+                
+                # Underwear and layers
+                'bra', 'undershirt', 'thermal', 'base layer', 'long underwear',
+                'sports bra', 'bikini top', 'swimsuit top', 'bathing suit top',
+                
+                # Specific styles and materials
+                'cotton shirt', 'silk blouse', 'wool sweater', 'cashmere sweater',
+                'linen shirt', 'denim shirt', 'plaid shirt', 'striped shirt',
+                'solid shirt', 'patterned shirt', 'formal shirt', 'casual shirt'
             ],
             # Lower body items
             'lower_body': [
-                'pants', 'jeans', 'trousers', 'shorts', 'skirt', 'dress', 'leggings', 'tights',
-                'sweatpants', 'joggers', 'khakis', 'chinos', 'slacks', 'cargo pants', 'overalls',
-                'jumpsuit', 'romper', 'culottes', 'capris', 'bermuda shorts', 'athletic shorts',
-                'basketball shorts', 'swimming trunks', 'board shorts', 'dress pants', 'suit pants',
-                'tuxedo pants', 'formal pants', 'casual pants', 'work pants', 'utility pants'
+                # Pants and trousers
+                'pants', 'jeans', 'trousers', 'shorts', 'leggings', 'tights', 'sweatpants',
+                'joggers', 'khakis', 'chinos', 'slacks', 'cargo pants', 'dress pants',
+                'suit pants', 'tuxedo pants', 'formal pants', 'casual pants', 'work pants',
+                'utility pants', 'track pants', 'athletic pants', 'yoga pants',
+                
+                # Skirts and dresses
+                'skirt', 'dress', 'mini skirt', 'maxi skirt', 'midi skirt', 'pencil skirt',
+                'pleated skirt', 'a-line skirt', 'wrap skirt', 'tutu', 'ball gown',
+                'cocktail dress', 'evening dress', 'casual dress', 'formal dress',
+                'sundress', 'shift dress', 'sheath dress', 'wrap dress',
+                
+                # Overalls and jumpsuits
+                'overalls', 'jumpsuit', 'romper', 'bodysuit', 'unitard',
+                
+                # Shorts and swimwear
+                'bermuda shorts', 'athletic shorts', 'basketball shorts', 'swimming trunks',
+                'board shorts', 'bikini bottom', 'swimsuit bottom', 'bathing suit bottom',
+                'underwear', 'boxers', 'briefs', 'panties', 'thong',
+                
+                # Specific styles and materials
+                'denim jeans', 'blue jeans', 'black jeans', 'skinny jeans', 'bootcut jeans',
+                'straight leg jeans', 'wide leg jeans', 'mom jeans', 'boyfriend jeans',
+                'high waisted pants', 'low rise pants', 'wide leg pants', 'skinny pants',
+                'leather pants', 'silk pants', 'linen pants', 'cotton pants'
             ],
             # Footwear
             'feet': [
+                # General footwear
                 'shoes', 'sneakers', 'boots', 'sandals', 'flip flops', 'heels', 'pumps', 'loafers',
-                'oxfords', 'mules', 'clogs', 'espadrilles', 'moccasins', 'espadrilles', 'slides',
+                'oxfords', 'mules', 'clogs', 'espadrilles', 'moccasins', 'slides', 'slippers',
+                
+                # Athletic and sports shoes
                 'athletic shoes', 'running shoes', 'tennis shoes', 'basketball shoes', 'cleats',
-                'dress shoes', 'formal shoes', 'casual shoes', 'work boots', 'hiking boots',
-                'winter boots', 'rain boots', 'ankle boots', 'knee high boots', 'thigh high boots'
+                'soccer shoes', 'football cleats', 'baseball cleats', 'golf shoes', 'bowling shoes',
+                'dance shoes', 'ballet shoes', 'tap shoes', 'climbing shoes', 'weightlifting shoes',
+                
+                # Formal and dress shoes
+                'dress shoes', 'formal shoes', 'casual shoes', 'wingtips', 'derby shoes',
+                'monk straps', 'chelsea boots', 'chukka boots', 'dress boots',
+                
+                # Work and outdoor boots
+                'work boots', 'hiking boots', 'winter boots', 'rain boots', 'snow boots',
+                'ankle boots', 'knee high boots', 'thigh high boots', 'combat boots',
+                'steel toe boots', 'construction boots', 'military boots',
+                
+                # Casual and comfort shoes
+                'slip-ons', 'vans', 'converse', 'keds', 'espadrilles', 'boat shoes',
+                'driving shoes', 'minimalist shoes', 'barefoot shoes', 'orthopedic shoes',
+                
+                # Specific styles and materials
+                'leather shoes', 'suede shoes', 'canvas shoes', 'rubber shoes',
+                'high heels', 'low heels', 'flat shoes', 'platform shoes',
+                'wedge heels', 'stiletto heels', 'block heels', 'kitten heels'
             ]
         }
         """Initialize the clothing detector with a vision-language model.

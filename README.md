@@ -123,9 +123,10 @@ Once running, access the web interface at:
 
 #### 1. Clothing Detections Table
 - **ID**: Person identification number
-- **Head**: Hats, hair accessories, glasses
-- **Upper Body**: Shirts, jackets, tops
-- **Lower Body**: Pants, skirts, shorts
+- **Head**: Hats, hair accessories, glasses, facial features (beards, mustaches), hair styles
+- **Upper Body**: Shirts, jackets, tops, sweaters, blouses, outerwear
+- **Lower Body**: Pants, skirts, dresses, shorts, leggings
+- **Feet**: Shoes, boots, sandals, sneakers, footwear
 
 #### 2. Person Descriptions
 - Natural language descriptions from BLIP analysis
@@ -314,6 +315,8 @@ Place custom YOLO models in the project root:
 - Detailed, natural language descriptions
 - Requires internet for model download
 - More accurate and comprehensive
+- **BLIP Capabilities**: Can detect clothing items, accessories, personal features, colors, materials, and styles
+- **Examples**: "blue t-shirt", "black jeans", "beard", "glasses", "long hair", "formal wear", "cotton shirt", "plaid pattern"
 
 ### Performance Tuning
 

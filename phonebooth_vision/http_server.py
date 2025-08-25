@@ -302,7 +302,7 @@ def index():
                  <h2>Clothing Detections <span class="status-indicator status-active" id="clothing-status"></span></h2>
                  <div class="scrollable-content">
                    <table id="clothing-table">
-                     <thead><tr><th>ID</th><th>Head</th><th>Upper Body</th><th>Lower Body</th></tr></thead>
+                     <thead><tr><th>ID</th><th>Head</th><th>Upper Body</th><th>Lower Body</th><th>Feet</th></tr></thead>
                      <tbody></tbody>
                    </table>
                  </div>
@@ -466,6 +466,7 @@ def index():
                   let headItems = [];
                   let upperBodyItems = [];
                   let lowerBodyItems = [];
+                  let feetItems = [];
                   
                   if (detection.clothing_items) {
                     // Handle both old format (strings) and new format (arrays)
@@ -486,14 +487,21 @@ def index():
                     } else if (detection.clothing_items.lower_body) {
                       lowerBodyItems = [detection.clothing_items.lower_body];
                     }
+                    
+                    if (Array.isArray(detection.clothing_items.feet)) {
+                      feetItems = detection.clothing_items.feet;
+                    } else if (detection.clothing_items.feet) {
+                      feetItems = [detection.clothing_items.feet];
+                    }
                   }
                   
                   // Join multiple items with commas
                   const headText = headItems.join(', ');
                   const upperBodyText = upperBodyItems.join(', ');
                   const lowerBodyText = lowerBodyItems.join(', ');
+                  const feetText = feetItems.join(', ');
                   
-                  row.innerHTML = `<td>${detection.id}</td><td>${headText}</td><td>${upperBodyText}</td><td>${lowerBodyText}</td>`;
+                  row.innerHTML = `<td>${detection.id}</td><td>${headText}</td><td>${upperBodyText}</td><td>${lowerBodyText}</td><td>${feetText}</td>`;
                   tbody.appendChild(row);
                   
                   // Create description item
