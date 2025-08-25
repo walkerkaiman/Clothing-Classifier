@@ -98,19 +98,19 @@ This script automatically:
 ### Option 2: Manual Start
 ```powershell
 # Terminal 1: Start the monitor (object detection + clothing analysis)
-python -m phonebooth_vision.simple_monitor
+python -m clothing_vision.simple_monitor
 
 # Terminal 2: Start the web server
-python -m phonebooth_vision.http_server
+python -m clothing_vision.http_server
 ```
 
 ### Option 3: Using PowerShell Scripts
 ```powershell
 # Start monitor only
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', 'python -m phonebooth_vision.simple_monitor')
+Start-Process powershell -ArgumentList @('-NoExit', '-Command', 'python -m clothing_vision.simple_monitor')
 
 # Start server only
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', 'python -m phonebooth_vision.http_server')
+Start-Process powershell -ArgumentList @('-NoExit', '-Command', 'python -m clothing_vision.http_server')
 ```
 
 ## 🌐 Web Interface
@@ -273,7 +273,7 @@ curl -X POST http://localhost:8000/update_blip_settings \
 
 ```
 YOLO-Classifier/
-├── phonebooth_vision/           # Main application package
+├── clothing_vision/           # Main application package
 │   ├── __init__.py
 │   ├── simple_monitor.py        # Main detection loop
 │   ├── http_server.py           # Web server and UI
@@ -380,8 +380,8 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ### Debug Mode
 Enable verbose logging by modifying the startup commands:
 ```powershell
-python -m phonebooth_vision.simple_monitor --verbose
-python -m phonebooth_vision.http_server --log-level debug
+python -m clothing_vision.simple_monitor --verbose
+python -m clothing_vision.http_server --log-level debug
 ```
 
 ### Log Files
@@ -430,8 +430,8 @@ pip install pytest ruff black
 pytest
 
 # Format code
-black phonebooth_vision/
-ruff check phonebooth_vision/
+black clothing_vision/
+ruff check clothing_vision/
 ```
 
 ## 📄 License
@@ -457,4 +457,4 @@ For issues and questions:
 
 **Version**: 1.0.0  
 **Last Updated**: January 2025  
-**Maintainer**: Phonebooth Vision Team
+**Maintainer**: Clothing Vision Team

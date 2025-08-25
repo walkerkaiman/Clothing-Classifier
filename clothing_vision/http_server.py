@@ -631,4 +631,4 @@ async def update_blip_settings(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("phonebooth_vision.http_server:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("clothing_vision.http_server:app", host="0.0.0.0", port=8000, reload=False)

@@ -15,12 +15,12 @@ if (Test-Path $venvActivate) {
 }
 
 Write-Host "Starting simple_monitor in new window…"
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', 'python -m phonebooth_vision.simple_monitor')
+Start-Process powershell -ArgumentList @('-NoExit', '-Command', 'python -m clothing_vision.simple_monitor')
 
 Start-Sleep -Seconds 2
 
 Write-Host "Starting HTTP server on port $Port…"
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', "uvicorn phonebooth_vision.http_server:app --port $Port")
+Start-Process powershell -ArgumentList @('-NoExit', '-Command', "uvicorn clothing_vision.http_server:app --port $Port")
 
 Start-Sleep -Seconds 2
 

@@ -1,4 +1,4 @@
-# Phonebooth Vision - Core Dependencies
+# Clothing Vision - Core Dependencies
 # Install with: pip install -r requirements.txt
 
 # Web framework and server

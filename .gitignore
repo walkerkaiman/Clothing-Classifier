@@ -28,7 +28,7 @@ settings_override.json
 
 # --- Logs -----------------------------------------------------
 *.log
-phonebooth_vision.log
+clothing_vision.log
 
 # --- Build artifacts ------------------------------------------
 build/
@@ -42,7 +42,7 @@ config.toml.backup
 
 # --- Runtime files --------------------------------------------
 clothing_detections.json
-phonebooth_vision.log
+clothing_vision.log
 
 # --- PyInstaller ----------------------------------------------
 *.spec
