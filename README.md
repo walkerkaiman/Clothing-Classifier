@@ -278,9 +278,7 @@ YOLO-Classifier/
 │   ├── simple_monitor.py        # Main detection loop
 │   ├── http_server.py           # Web server and UI
 │   ├── clothing_detector.py     # Clothing analysis engine
-│   ├── json_server.py           # JSON data server
-│   ├── fashionpedia_detector.py # Alternative clothing detector
-│   ├── auto_launch.py           # Auto-launch utilities
+│   ├── json_server.py           # JSON file writer (used by monitor)
 │   └── config/                  # Configuration management
 │       ├── __init__.py
 │       ├── manager.py           # Config loading/saving

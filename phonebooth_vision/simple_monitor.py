@@ -47,7 +47,6 @@ if config_path.exists():
 
 # Import clothing detection and server modules
 from .clothing_detector import ClothingDetector, SimpleClothingDetector
-from .fashionpedia_detector import FashionpediaDetector
 from .json_server import create_server
 from .config.manager import get_settings
 
@@ -308,25 +307,7 @@ def initialize_clothing_detection():
         # Initialize clothing detector
         if clothing_config.enabled:
             # Check model type from configuration
-            if clothing_config.model_type == "fashionpedia":
-                try:
-                    logging.info(f"Initializing Fashionpedia detector for fashion-specific clothing analysis")
-                    clothing_detector = FashionpediaDetector(
-                        model_name=clothing_config.model_name,
-                        device="cuda" if torch.cuda.is_available() else "cpu"
-                    )
-                    logging.info(f"Successfully initialized Fashionpedia detector")
-                except ImportError as e:
-                    logging.warning(f"Fashionpedia detection not available: {e}")
-                    logging.info("Falling back to simple clothing detector")
-                    clothing_detector = SimpleClothingDetector()
-                    logging.info("Successfully initialized simple clothing detector")
-                except Exception as e:
-                    logging.error(f"Failed to initialize Fashionpedia detector: {e}")
-                    logging.info("Falling back to simple clothing detector")
-                    clothing_detector = SimpleClothingDetector()
-                    logging.info("Successfully initialized simple clothing detector")
-            elif clothing_config.model_type == "advanced":
+            if clothing_config.model_type == "advanced":
                 try:
                     logging.info(f"Initializing advanced clothing detector: {clothing_config.model_name}")
                     # Extract BLIP configuration parameters

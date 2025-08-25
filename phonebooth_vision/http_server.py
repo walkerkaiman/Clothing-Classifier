@@ -7,14 +7,12 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-import cv2  # add import
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
 STATIC_DIR = Path(__file__).with_suffix("").parent / "static"
 IMAGE_PATH = Path("latest.jpg")
-MODELS_DIR = Path("models")
 
 app = FastAPI(title="Object Monitor UI")
 

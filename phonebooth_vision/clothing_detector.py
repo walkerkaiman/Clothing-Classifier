@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import cv2
 import numpy as np
@@ -205,55 +204,8 @@ class ClothingDetector:
         return cropped
     
     def segment_person_regions(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Dict[str, np.ndarray]:
-        """Segment a person into different body regions for detailed clothing analysis.
-        
-        Args:
-            frame: Input frame as numpy array
-            bbox: Bounding box as (x1, y1, x2, y2)
-            
-        Returns:
-            Dictionary of region crops: {'upper_body', 'lower_body', 'head', 'full_body'}
-        """
-        x1, y1, x2, y2 = bbox
-        h, w = frame.shape[:2]
-        
-        # Ensure coordinates are within frame bounds
-        x1 = max(0, min(x1, w))
-        y1 = max(0, min(y1, h))
-        x2 = max(0, min(x2, w))
-        y2 = max(0, min(y2, h))
-        
-        if x2 <= x1 or y2 <= y1:
-            return {}
-        
-        person_height = y2 - y1
-        person_width = x2 - x1
-        
-        regions = {}
-        
-        # Full body (original crop)
-        regions['full_body'] = cv2.resize(frame[y1:y2, x1:x2], (224, 224))
-        
-        # Head region (top 25% of person)
-        head_height = int(person_height * 0.25)
-        head_y1 = y1
-        head_y2 = min(y1 + head_height, y2)
-        if head_y2 > head_y1:
-            regions['head'] = cv2.resize(frame[head_y1:head_y2, x1:x2], (224, 224))
-        
-        # Upper body (25% to 60% of person height)
-        upper_y1 = y1 + int(person_height * 0.25)
-        upper_y2 = y1 + int(person_height * 0.60)
-        if upper_y2 > upper_y1:
-            regions['upper_body'] = cv2.resize(frame[upper_y1:upper_y2, x1:x2], (224, 224))
-        
-        # Lower body (60% to bottom)
-        lower_y1 = y1 + int(person_height * 0.60)
-        lower_y2 = y2
-        if lower_y2 > lower_y1:
-            regions['lower_body'] = cv2.resize(frame[lower_y1:lower_y2, x1:x2], (224, 224))
-        
-        return regions
+        """[Removed] Previously segmented body regions; no longer used by processing flow."""
+        return {}
     
     def generate_clothing_description(self, person_image: np.ndarray) -> str:
         """Generate a clothing description for a person image.
@@ -343,49 +295,7 @@ class ClothingDetector:
             logger.error(f"Error generating clothing description: {e}")
             return "clothing not visible"
     
-    def generate_detailed_clothing_description(self, regions: Dict[str, np.ndarray]) -> Dict[str, str]:
-        """Generate detailed clothing descriptions for each body region.
-        
-        Args:
-            regions: Dictionary of body region crops
-            
-        Returns:
-            Dictionary of clothing descriptions for each region
-        """
-        clothing_items = {}
-        
-        try:
-            # Analyze upper body (shirts, jackets, etc.)
-            if 'upper_body' in regions:
-                upper_desc = self.generate_clothing_description(regions['upper_body'])
-                if upper_desc and upper_desc != "clothing not visible":
-                    clothing_items['upper_body'] = upper_desc
-            
-            # Analyze lower body (pants, skirts, etc.)
-            if 'lower_body' in regions:
-                lower_desc = self.generate_clothing_description(regions['lower_body'])
-                if lower_desc and lower_desc != "clothing not visible":
-                    clothing_items['lower_body'] = lower_desc
-            
-            # Analyze head region (hats, accessories)
-            if 'head' in regions:
-                head_desc = self.generate_clothing_description(regions['head'])
-                if head_desc and head_desc != "clothing not visible":
-                    clothing_items['head'] = head_desc
-            
-            # If no specific regions detected, use full body
-            if not clothing_items and 'full_body' in regions:
-                full_desc = self.generate_clothing_description(regions['full_body'])
-                if full_desc and full_desc != "clothing not visible":
-                    clothing_items['full_body'] = full_desc
-            
-        except Exception as e:
-            logger.error(f"Error generating detailed clothing descriptions: {e}")
-            # Fallback to full body description
-            if 'full_body' in regions:
-                clothing_items['full_body'] = self.generate_clothing_description(regions['full_body'])
-        
-        return clothing_items
+    # Removed unused generate_detailed_clothing_description per pruning
     
     def _enhance_clothing_description(self, caption: str) -> str:
         """Enhance and clean the clothing description.
@@ -522,40 +432,7 @@ class ClothingDetector:
         
         return results
     
-    def _combine_clothing_descriptions(self, clothing_items: Dict[str, str]) -> str:
-        """Combine individual clothing item descriptions into a coherent description.
-        
-        Args:
-            clothing_items: Dictionary of clothing descriptions by body region
-            
-        Returns:
-            Combined clothing description
-        """
-        if not clothing_items:
-            return "clothing not visible"
-        
-        # Build description from different regions
-        description_parts = []
-        
-        # Add upper body items
-        if 'upper_body' in clothing_items:
-            description_parts.append(clothing_items['upper_body'])
-        
-        # Add lower body items
-        if 'lower_body' in clothing_items:
-            description_parts.append(clothing_items['lower_body'])
-        
-        # Add head accessories
-        if 'head' in clothing_items:
-            description_parts.append(clothing_items['head'])
-        
-        # If we have specific regions, use them; otherwise use full body
-        if description_parts:
-            return ", ".join(description_parts)
-        elif 'full_body' in clothing_items:
-            return clothing_items['full_body']
-        else:
-            return "clothing not visible"
+    # Removed unused _combine_clothing_descriptions per pruning
 
 
 class SimpleClothingDetector:
