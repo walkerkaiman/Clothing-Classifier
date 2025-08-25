@@ -1,0 +1,68 @@
+Phonebooth Vision - Pruning Report (safe removals without changing functionality)
+
+Entry points traced
+- python -m phonebooth_vision.simple_monitor (main loop; writes latest.jpg and clothing_detections.json)
+- python -m phonebooth_vision.http_server (FastAPI app serving UI and JSON from file)
+- run.ps1 (Windows convenience: launches the two processes above)
+
+Findings: unused code paths, classes, functions, and constants
+1) phonebooth_vision/json_server.py
+   - Class ClothingDataServer (lines ~25-160) and its start/_run_server path are not referenced by any entry point. The app uses a file-based handoff to the UI instead.
+   - Factory create_server("http") branch is consequently unused.
+   - Import fastapi.HTTPException is unused in this module.
+   - If you keep only the file-based flow, you can remove ClothingDataServer, the "http" branch in create_server, and related uvicorn usage without affecting current functionality.
+   - FileBasedServer.get_latest_data() is not called anywhere; safe to remove.
+
+2) phonebooth_vision/clothing_detector.py (advanced BLIP detector)
+   - Inside class ClothingDetector, these are unused in current code paths:
+     - segment_person_regions(...)
+     - generate_detailed_clothing_description(...)
+     - _combine_clothing_descriptions(...)
+     None of these are invoked by process_detections(); the advanced path uses a full-body caption plus _categorize_clothing_items(). They can be removed safely.
+   - from pathlib import Path is unused in this file; safe to drop the import.
+
+3) phonebooth_vision/http_server.py
+   - MODELS_DIR constant is defined but never used; safe to remove.
+   - import cv2 is unused; safe to remove.
+   - Duplicate import of Path (imported twice); keep only one.
+
+4) phonebooth_vision/auto_launch.py
+   - This module is not used by the documented start flows (run.ps1 or python -m entries). It imports uvicorn and app but never launches the HTTP server. The whole file can be removed without affecting current functionality. If you prefer to keep it, you can at least remove unused imports (subprocess, uvicorn, app).
+
+5) phonebooth_vision/config/manager.py
+   - Unused imports: json, time. They can be removed. (watchdog and the manager itself are used via set_settings_path/get_settings in simple_monitor.)
+
+6) phonebooth_vision/fashionpedia_detector.py
+   - Unused imports: Path, Optional. The class itself is reachable when config app.clothing.model_type == "fashionpedia"; do not remove the file unless you are dropping that mode.
+
+7) Config structure vs. actual usage
+   - ServerConfig.host and ServerConfig.port are not used by the running flow. simple_monitor unconditionally creates a file-based server with output_file, and http_server reads from that file. If you remove ClothingDataServer, you can also drop these fields from config and model schema.
+
+8) Root/config documentation files
+   - config.toml.backup is not read by the program; safe to delete (kept only for documentation).
+
+Dependency pruning (requirements.txt)
+- torchvision: Not imported anywhere; safe to remove.
+- httpx: Not imported anywhere; safe to remove.
+- python-multipart: No endpoints accept form-data/uploads; safe to remove.
+- typer: No CLI built with Typer; safe to remove.
+Notes:
+- transformers is required for the advanced detector path (current config uses model_type = "advanced"). Keep it unless you drop that mode.
+- watchdog is used by the configuration hot-reload when a config file is present; keep.
+- uvicorn is required to run the FastAPI app (http_server); keep.
+
+Minor cleanups (no behavioral change)
+- Remove unused imports mentioned above across modules to reduce import time and lints.
+- Consider aligning simple_monitor to honor [app.server.server_type] if you intend to preserve the HTTP JSON server option; otherwise, remove ClothingDataServer and unused ServerConfig fields as noted.
+
+Summary of safe removals
+- Delete phonebooth_vision/json_server.ClothingDataServer and create_server("http") branch; keep only FileBasedServer.
+- Delete FileBasedServer.get_latest_data().
+- Delete unused methods in ClothingDetector: segment_person_regions, generate_detailed_clothing_description, _combine_clothing_descriptions.
+- Delete MODELS_DIR constant and cv2 import in http_server; deduplicate Path import.
+- Delete unused imports in config/manager.py and fashionpedia_detector.py.
+- Delete auto_launch.py (or at least its unused imports) if you do not rely on it.
+- Delete config.toml.backup.
+- Remove these requirements: torchvision, httpx, python-multipart, typer.
+
+All items above are not referenced by any traced path from the documented entry points and their current configuration.
