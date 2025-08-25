@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import cv2  # add import
@@ -12,11 +12,9 @@ import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
-OUTPUT_PATH = Path("objects.json")
 STATIC_DIR = Path(__file__).with_suffix("").parent / "static"
 IMAGE_PATH = Path("latest.jpg")
 MODELS_DIR = Path("models")
-CLOTHING_DETECTIONS_PATH = Path("clothing_detections.json")
 
 app = FastAPI(title="Object Monitor UI")
 
@@ -32,59 +30,13 @@ app.add_middleware(
 )
 
 
-@app.get("/objects.json", response_class=JSONResponse)
-def get_objects():
-    if not OUTPUT_PATH.exists():
-        return {}
-    try:
-        content = OUTPUT_PATH.read_text()
-        if not content.strip():
-            return {}
-        data = json.loads(content)
-        return data
-    except json.JSONDecodeError as e:
-        # Return empty data instead of 500 error
-        return {}
-    except Exception as e:
-        # Log the error but return empty data
-        print(f"Error reading objects.json: {e}")
-        return {}
 
 
-@app.get("/clothing.json", response_class=JSONResponse)
-def get_clothing_detections():
-    """Get current clothing detections."""
-    try:
-        # Try to fetch from the clothing detection server first
-        import requests
-        response = requests.get("http://localhost:8001/detections", timeout=1.0)
-        if response.status_code == 200:
-            return response.json()
-    except Exception as e:
-        # Fallback to file if server is not available
-        pass
-    
-    # Fallback to file-based approach
-    if not CLOTHING_DETECTIONS_PATH.exists():
-        return {"timestamp": "", "detections": []}
-    try:
-        data = json.loads(CLOTHING_DETECTIONS_PATH.read_text())
-    except json.JSONDecodeError as e:
-        return {"timestamp": "", "detections": []}
-    return data
 
 
-@app.get("/detections", response_class=JSONResponse)
-def get_all_detections():
-    """Get both object counts and clothing detections."""
-    objects_data = get_objects()
-    clothing_data = get_clothing_detections()
-    
-    return {
-        "objects": objects_data,
-        "clothing": clothing_data,
-        "timestamp": clothing_data.get("timestamp", "")
-    }
+
+
+
 
 
 @app.get("/latest.jpg")
@@ -193,6 +145,150 @@ def index():
           }
           .status-active { background-color: #4caf50; }
           .status-inactive { background-color: #f44336; }
+          
+                     .settings-form {
+             background: #252525;
+             padding: 1rem;
+             border: 1px solid #333;
+             border-radius: 4px;
+             margin-top: 10px;
+           }
+           
+           .setting-group {
+             display: flex;
+             align-items: center;
+             margin-bottom: 10px;
+             gap: 10px;
+             position: relative;
+           }
+           
+           .setting-group label {
+             min-width: 120px;
+             font-weight: 500;
+             color: var(--fg);
+             cursor: help;
+           }
+           
+           .setting-group input[type="range"] {
+             flex: 1;
+             background: #2b2b2b;
+             border: 1px solid var(--accent);
+             border-radius: 4px;
+             height: 6px;
+             outline: none;
+           }
+           
+           .setting-group input[type="range"]::-webkit-slider-thumb {
+             background: var(--accent);
+             border-radius: 50%;
+             width: 16px;
+             height: 16px;
+             cursor: pointer;
+           }
+           
+           .setting-group input[type="range"]::-moz-range-thumb {
+             background: var(--accent);
+             border-radius: 50%;
+             width: 16px;
+             height: 16px;
+             cursor: pointer;
+             border: none;
+           }
+           
+           .setting-group span {
+             min-width: 40px;
+             text-align: right;
+             font-weight: 500;
+             color: var(--fg);
+           }
+           
+           .setting-group input[type="checkbox"] {
+             margin-left: 10px;
+             width: 16px;
+             height: 16px;
+             accent-color: var(--accent);
+           }
+           
+           .settings-form button {
+             background: #2b2b2b;
+             color: var(--fg);
+             border: 1px solid var(--accent);
+             border-radius: 4px;
+             padding: 8px 16px;
+             cursor: pointer;
+             margin-top: 10px;
+             font-weight: 500;
+           }
+           
+           .settings-form button:hover {
+             background: var(--accent);
+             color: var(--bg);
+           }
+           
+           /* Tooltip styles */
+           .tooltip {
+             position: relative;
+             display: inline-block;
+           }
+           
+           .tooltip .tooltiptext {
+             visibility: hidden;
+             width: 250px;
+             background-color: #1e1e1e;
+             color: var(--fg);
+             text-align: left;
+             border-radius: 6px;
+             padding: 8px 12px;
+             position: absolute;
+             z-index: 1;
+             bottom: 125%;
+             left: 50%;
+             margin-left: -125px;
+             opacity: 0;
+             transition: opacity 0.3s;
+             border: 1px solid var(--accent);
+             font-size: 12px;
+             line-height: 1.4;
+           }
+           
+           .tooltip .tooltiptext::after {
+             content: "";
+             position: absolute;
+             top: 100%;
+             left: 50%;
+             margin-left: -5px;
+             border-width: 5px;
+             border-style: solid;
+             border-color: var(--accent) transparent transparent transparent;
+           }
+           
+                       .tooltip:hover .tooltiptext {
+              visibility: visible;
+              opacity: 1;
+            }
+            
+            /* Description styling */
+            .description-item {
+              background: #2b2b2b;
+              border: 1px solid #333;
+              border-radius: 4px;
+              padding: 12px;
+              margin-bottom: 10px;
+              font-size: 14px;
+              line-height: 1.5;
+            }
+            
+            .description-header {
+              font-weight: 600;
+              color: var(--accent);
+              margin-bottom: 8px;
+              font-size: 13px;
+            }
+            
+            .description-text {
+              color: var(--fg);
+              font-style: italic;
+            }
         </style>
       </head>
       <body>
@@ -202,25 +298,24 @@ def index():
           <div class="main-layout">
             <!-- Left Panel: Objects and Clothing Data -->
             <div class="left-panel">
-              <div class="section">
-                <h2>Clothing Detections <span class="status-indicator status-active" id="clothing-status"></span></h2>
-                <div class="scrollable-content">
-                                     <table id="clothing-table">
-                     <thead><tr><th>ID</th><th>Description</th><th>Details</th><th>BBox</th></tr></thead>
+                             <div class="section">
+                 <h2>Clothing Detections <span class="status-indicator status-active" id="clothing-status"></span></h2>
+                 <div class="scrollable-content">
+                   <table id="clothing-table">
+                     <thead><tr><th>ID</th><th>Head</th><th>Upper Body</th><th>Lower Body</th></tr></thead>
                      <tbody></tbody>
                    </table>
-                </div>
-              </div>
-
-              <div class="section">
-                <h2>Object Counts <span class="status-indicator status-active" id="objects-status"></span></h2>
-                <div class="scrollable-content">
-                  <table id="obj-table">
-                    <thead><tr><th>Object</th><th>Count</th></tr></thead>
-                    <tbody></tbody>
-                  </table>
-                </div>
-              </div>
+                 </div>
+               </div>
+               
+               <div class="section">
+                 <h2>Person Descriptions <span class="status-indicator status-active" id="description-status"></span></h2>
+                 <div class="scrollable-content">
+                   <div id="descriptions-container">
+                     <!-- Person descriptions will be populated here -->
+                   </div>
+                 </div>
+               </div>
             </div>
 
             <!-- Right Panel: Camera Feed and Settings -->
@@ -229,134 +324,302 @@ def index():
                 <h2>Live Camera Feed</h2>
                 <img id="cam" src="/stream" />
               </div>
-
-              <div class="settings-section">
-                <h2>Settings</h2>
-                <form id="settings-form">
-                  <label>Camera:
-                    <select id="camera" name="camera"></select>
-                  </label><br/>
-                  <label>Model:
-                    <select id="model" name="model"></select>
-                  </label><br/>
-                  <button type="submit">Change Settings</button>
-                </form>
-              </div>
+              
+                             <div class="section">
+                 <h2>BLIP Settings</h2>
+                 <div class="settings-form">
+                   <div class="setting-group">
+                     <label for="max_length" class="tooltip">Max Length:
+                       <span class="tooltiptext">Maximum length of the generated description. Higher values allow for more detailed descriptions but may be slower to generate.</span>
+                     </label>
+                     <input type="range" id="max_length" min="50" max="300" value="150" />
+                     <span id="max_length_value">150</span>
+                   </div>
+                   <div class="setting-group">
+                     <label for="temperature" class="tooltip">Temperature:
+                       <span class="tooltiptext">Controls creativity vs. conservatism. Higher values (0.8-1.0) make BLIP more creative and less conservative, while lower values (0.1-0.5) make it more focused and predictable.</span>
+                     </label>
+                     <input type="range" id="temperature" min="0.1" max="1.0" step="0.1" value="0.9" />
+                     <span id="temperature_value">0.9</span>
+                   </div>
+                   <div class="setting-group">
+                     <label for="num_beams" class="tooltip">Beam Search:
+                       <span class="tooltiptext">Number of search paths for text generation. Lower values (1-3) create more variety, while higher values (5-10) produce more focused and consistent results.</span>
+                     </label>
+                     <input type="range" id="num_beams" min="1" max="10" value="3" />
+                     <span id="num_beams_value">3</span>
+                   </div>
+                   <div class="setting-group">
+                     <label for="top_p" class="tooltip">Top P:
+                       <span class="tooltiptext">Nucleus sampling parameter that controls diversity. Higher values (0.8-1.0) make BLIP more permissive and creative, while lower values (0.1-0.5) make it more conservative and focused.</span>
+                     </label>
+                     <input type="range" id="top_p" min="0.1" max="1.0" step="0.1" value="0.9" />
+                     <span id="top_p_value">0.9</span>
+                   </div>
+                   <div class="setting-group">
+                     <label for="do_sample" class="tooltip">Enable Sampling:
+                       <span class="tooltiptext">When enabled, BLIP uses sampling for text generation, creating more varied and creative descriptions. When disabled, it uses deterministic generation for more consistent results.</span>
+                     </label>
+                     <input type="checkbox" id="do_sample" checked />
+                   </div>
+                   <button onclick="updateBLIPSettings()">Update Settings</button>
+                 </div>
+               </div>
             </div>
           </div>
         </div>
 
         <script>
           const camImg = document.getElementById('cam');
-          document.addEventListener('DOMContentLoaded', async () => {
-            // populate dropdowns
-            const camSel = document.getElementById('camera');
-            const modelSel = document.getElementById('model');
-            const cams = await fetch('/cameras').then(r=>r.json());
-            cams.forEach(c => {
-              const opt = document.createElement('option');
-              opt.value = c.id;
-              opt.textContent = c.name;
-              camSel.appendChild(opt);
-            });
-            const models = await fetch('/models').then(r=>r.json());
-            models.forEach(m => {
-              const opt = document.createElement('option');
-              opt.value = m;
-              opt.textContent = m;
-              modelSel.appendChild(opt);
-            });
+          
+          // Update value displays when sliders change
+          document.getElementById('max_length').addEventListener('input', function() {
+            document.getElementById('max_length_value').textContent = this.value;
           });
-
-          async function refreshCounts() {
+          
+          document.getElementById('temperature').addEventListener('input', function() {
+            document.getElementById('temperature_value').textContent = this.value;
+          });
+          
+          document.getElementById('num_beams').addEventListener('input', function() {
+            document.getElementById('num_beams_value').textContent = this.value;
+          });
+          
+          document.getElementById('top_p').addEventListener('input', function() {
+            document.getElementById('top_p_value').textContent = this.value;
+          });
+          
+          async function updateBLIPSettings() {
+            const settings = {
+              max_length: parseInt(document.getElementById('max_length').value),
+              temperature: parseFloat(document.getElementById('temperature').value),
+              num_beams: parseInt(document.getElementById('num_beams').value),
+              top_p: parseFloat(document.getElementById('top_p').value),
+              do_sample: document.getElementById('do_sample').checked
+            };
+            
             try {
-              const res = await fetch('/objects.json');
-              const data = await res.json();
-              const tbody = document.querySelector('#obj-table tbody');
-              tbody.innerHTML = '';
-              for (const [name, info] of Object.entries(data)) {
-                const row = document.createElement('tr');
-                row.innerHTML = `<td style=\"color:${info.color}\">${name}</td><td>${info.count}</td>`;
-                tbody.appendChild(row);
+              const response = await fetch('/update_blip_settings', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(settings)
+              });
+              
+              if (response.ok) {
+                alert('BLIP settings updated successfully! The changes will take effect on the next clothing detection update.');
+              } else {
+                alert('Failed to update settings');
               }
-              document.getElementById('objects-status').className = 'status-indicator status-active';
             } catch (error) {
-              document.getElementById('objects-status').className = 'status-indicator status-inactive';
+              console.error('Error updating settings:', error);
+              alert('Error updating settings');
             }
           }
-
-                     async function refreshClothing() {
-             try {
-               const res = await fetch('/clothing.json');
-               const data = await res.json();
-               const tbody = document.querySelector('#clothing-table tbody');
-               tbody.innerHTML = '';
-               for (const detection of data.detections || []) {
-                 const row = document.createElement('tr');
-                 
-                 // Create detailed clothing breakdown
-                 let detailsHtml = '';
-                 if (detection.clothing_items) {
-                   const details = [];
-                   for (const [region, item] of Object.entries(detection.clothing_items)) {
-                     const regionName = region.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-                     details.push(`<strong>${regionName}:</strong> ${item}`);
-                   }
-                   detailsHtml = details.join('<br>');
-                 }
-                 
-                 row.innerHTML = `<td>${detection.id}</td><td>${detection.description}</td><td>${detailsHtml}</td><td>${detection.bbox.join(', ')}</td>`;
-                 tbody.appendChild(row);
-               }
-               document.getElementById('clothing-status').className = 'status-indicator status-active';
-             } catch (error) {
-               document.getElementById('clothing-status').className = 'status-indicator status-inactive';
-             }
-           }
           
-          setInterval(refreshCounts, 200); // 5 times per second
-          setInterval(refreshClothing, 1000); // 1 time per second
-          refreshCounts();
-          refreshClothing();
+                     document.addEventListener('DOMContentLoaded', async () => {
+             // Load current BLIP settings from server
+             try {
+               const response = await fetch('/get_blip_settings');
+               if (response.ok) {
+                 const settings = await response.json();
+                 
+                 // Update sliders and values
+                 document.getElementById('max_length').value = settings.max_length;
+                 document.getElementById('max_length_value').textContent = settings.max_length;
+                 
+                 document.getElementById('temperature').value = settings.temperature;
+                 document.getElementById('temperature_value').textContent = settings.temperature;
+                 
+                 document.getElementById('num_beams').value = settings.num_beams;
+                 document.getElementById('num_beams_value').textContent = settings.num_beams;
+                 
+                 document.getElementById('top_p').value = settings.top_p;
+                 document.getElementById('top_p_value').textContent = settings.top_p;
+                 
+                 document.getElementById('do_sample').checked = settings.do_sample;
+               }
+             } catch (error) {
+               console.error('Error loading BLIP settings:', error);
+             }
+           });
 
-          document.getElementById('settings-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const body = {
-              camera: parseInt(formData.get('camera')),
-              model: formData.get('model')
-            };
-            await fetch('/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-            alert('Settings updated. Please restart monitor to apply.');
-          });
+                                           async function refreshClothing() {
+              try {
+                const res = await fetch('/detections');
+                const data = await res.json();
+                
+                // Update clothing table
+                const tbody = document.querySelector('#clothing-table tbody');
+                tbody.innerHTML = '';
+                
+                // Update descriptions container
+                const descriptionsContainer = document.getElementById('descriptions-container');
+                descriptionsContainer.innerHTML = '';
+                
+                for (const detection of data.detections || []) {
+                  // Create clothing table row
+                  const row = document.createElement('tr');
+                  
+                  // Extract clothing items by region (now handling arrays)
+                  let headItems = [];
+                  let upperBodyItems = [];
+                  let lowerBodyItems = [];
+                  
+                  if (detection.clothing_items) {
+                    // Handle both old format (strings) and new format (arrays)
+                    if (Array.isArray(detection.clothing_items.head)) {
+                      headItems = detection.clothing_items.head;
+                    } else if (detection.clothing_items.head) {
+                      headItems = [detection.clothing_items.head];
+                    }
+                    
+                    if (Array.isArray(detection.clothing_items.upper_body)) {
+                      upperBodyItems = detection.clothing_items.upper_body;
+                    } else if (detection.clothing_items.upper_body) {
+                      upperBodyItems = [detection.clothing_items.upper_body];
+                    }
+                    
+                    if (Array.isArray(detection.clothing_items.lower_body)) {
+                      lowerBodyItems = detection.clothing_items.lower_body;
+                    } else if (detection.clothing_items.lower_body) {
+                      lowerBodyItems = [detection.clothing_items.lower_body];
+                    }
+                  }
+                  
+                  // Join multiple items with commas
+                  const headText = headItems.join(', ');
+                  const upperBodyText = upperBodyItems.join(', ');
+                  const lowerBodyText = lowerBodyItems.join(', ');
+                  
+                  row.innerHTML = `<td>${detection.id}</td><td>${headText}</td><td>${upperBodyText}</td><td>${lowerBodyText}</td>`;
+                  tbody.appendChild(row);
+                  
+                  // Create description item
+                  if (detection.description) {
+                    const descriptionItem = document.createElement('div');
+                    descriptionItem.className = 'description-item';
+                    descriptionItem.innerHTML = `
+                      <div class="description-header">Person ${detection.id}</div>
+                      <div class="description-text">"${detection.description}"</div>
+                    `;
+                    descriptionsContainer.appendChild(descriptionItem);
+                  }
+                }
+                
+                document.getElementById('clothing-status').className = 'status-indicator status-active';
+                document.getElementById('description-status').className = 'status-indicator status-active';
+              } catch (error) {
+                document.getElementById('clothing-status').className = 'status-indicator status-inactive';
+                document.getElementById('description-status').className = 'status-indicator status-inactive';
+              }
+            }
+          
+          setInterval(refreshClothing, 1000); // 1 time per second
+          refreshClothing();
         </script>
       </body>
     </html>""")
 
 
-@app.post("/settings")
-def update_settings(payload: dict):
-    # simplistic: write to settings.json which user can reload manually
-    path = Path("settings_override.json")
-    path.write_text(json.dumps(payload, indent=2))
-    return {"status": "saved", "path": str(path)}
+# Removed settings endpoint since the Settings UI section was removed
 
 
-@app.get("/cameras")
-def list_cameras():
-    cams = []
-    for idx in range(10):
-        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-        if cap.isOpened():
-            cams.append({"id": idx, "name": f"Camera {idx}"})
-            cap.release()
-    return cams
+# Removed cameras and models endpoints since Settings UI was removed
 
-@app.get("/models")
-def list_models():
-    if not MODELS_DIR.exists():
-        return []
-    return [p.name for p in MODELS_DIR.glob("*.pt")]
+
+@app.get("/detections", response_class=JSONResponse)
+def get_detections():
+    """Get current clothing detections."""
+    # Read directly from the file that simple_monitor writes to
+    clothing_path = Path("clothing_detections.json")
+    if not clothing_path.exists():
+        return {"timestamp": "", "detections": []}
+    try:
+        data = json.loads(clothing_path.read_text())
+    except json.JSONDecodeError as e:
+        return {"timestamp": "", "detections": []}
+    return data
+
+
+@app.get("/get_blip_settings")
+def get_blip_settings():
+    """Get current BLIP generation settings."""
+    try:
+        # Read current config
+        config_path = Path("config.toml")
+        if not config_path.exists():
+            return JSONResponse({"error": "Config file not found"}, status_code=404)
+        
+        # Parse TOML
+        import tomli
+        with open(config_path, "rb") as f:
+            config = tomli.load(f)
+        
+        # Get BLIP settings with defaults
+        clothing_config = config.get("app", {}).get("clothing", {})
+        
+        settings = {
+            "max_length": clothing_config.get("max_length", 150),
+            "temperature": clothing_config.get("temperature", 0.9),
+            "num_beams": clothing_config.get("num_beams", 3),
+            "top_p": clothing_config.get("top_p", 0.9),
+            "do_sample": clothing_config.get("do_sample", True)
+        }
+        
+        return JSONResponse(settings)
+        
+    except Exception as e:
+        print(f"Error in get_blip_settings: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/update_blip_settings")
+async def update_blip_settings(request: Request):
+    """Update BLIP generation settings."""
+    try:
+        settings_data = await request.json()
+        print(f"Received settings: {settings_data}")  # Debug log
+        
+        # Read current config
+        config_path = Path("config.toml")
+        if not config_path.exists():
+            return JSONResponse({"error": "Config file not found"}, status_code=404)
+        
+        # Parse TOML
+        import tomli
+        with open(config_path, "rb") as f:
+            config = tomli.load(f)
+        
+        # Ensure the clothing section exists
+        if "app" not in config:
+            config["app"] = {}
+        if "clothing" not in config["app"]:
+            config["app"]["clothing"] = {}
+        
+        # Update BLIP settings
+        config["app"]["clothing"]["max_length"] = settings_data["max_length"]
+        config["app"]["clothing"]["temperature"] = settings_data["temperature"]
+        config["app"]["clothing"]["num_beams"] = settings_data["num_beams"]
+        config["app"]["clothing"]["top_p"] = settings_data["top_p"]
+        config["app"]["clothing"]["do_sample"] = settings_data["do_sample"]
+        
+        print(f"Updated config: {config['app']['clothing']}")  # Debug log
+        
+        # Write back to config file
+        import tomli_w
+        with open(config_path, "wb") as f:
+            tomli_w.dump(config, f)
+        
+        print("Config file written successfully")  # Debug log
+        return JSONResponse({"message": "Settings updated successfully"})
+        
+    except Exception as e:
+        print(f"Error in update_blip_settings: {e}")  # Debug log
+        import traceback
+        traceback.print_exc()  # Print full stack trace
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":

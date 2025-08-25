@@ -1,742 +1,355 @@
-"""Fashionpedia clothing detection module.
+#!/usr/bin/env python3
+"""Fashionpedia-style clothing detector with attribute vectors."""
 
-This module implements proper Fashionpedia integration for fashion-specific
-clothing detection using attribute vectors and the Fashionpedia dataset.
-"""
-
-from __future__ import annotations
-
-import logging
-import time
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
 import cv2
 import numpy as np
-from PIL import Image
-import torch
+import logging
+from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
-# Fashionpedia-specific imports
 try:
-    from transformers import (
-        AutoProcessor, 
-        AutoModelForImageClassification,
-        AutoFeatureExtractor
-    )
+    from transformers import AutoFeatureExtractor, AutoModelForImageClassification
+    import torch
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
-    logger.warning("Transformers not available. Fashionpedia detection will not work.")
+    logging.warning("Transformers not available, FashionpediaDetector will not work")
+
+logger = logging.getLogger(__name__)
 
 
 class FashionpediaDetector:
-    """Fashionpedia-based clothing detector using attribute vectors."""
+    """Advanced clothing detector using Fashionpedia-style attribute analysis."""
     
-    def __init__(self, model_name: str = "microsoft/resnet-50", device: Optional[str] = None):
-        """Initialize the Fashionpedia detector.
-        
-        Args:
-            model_name: Name of the base model for feature extraction
-            device: Device to run inference on ('cuda', 'cpu', or None for auto)
-        """
+    def __init__(self, model_name: str = "microsoft/resnet-50", device: str = "cpu"):
+        """Initialize the Fashionpedia detector."""
         if not TRANSFORMERS_AVAILABLE:
-            raise ImportError("Transformers library is required for Fashionpedia detection. Install with: pip install transformers")
+            raise ImportError("Transformers library is required for FashionpediaDetector")
         
+        self.device = device
         self.model_name = model_name
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Fashionpedia attribute categories
-        self.fashion_attributes = {
-            'category': [
-                'shirt', 'pants', 'dress', 'skirt', 'jacket', 'coat', 'sweater', 'hoodie',
-                'jeans', 't-shirt', 'blouse', 'vest', 'scarf', 'gloves', 'socks', 'belt',
-                'tie', 'bow tie', 'suit', 'blazer', 'polo', 'tank top', 'shorts', 'leggings',
-                'jumpsuit', 'overalls', 'hat', 'cap', 'shoes', 'sneakers', 'boots'
-            ],
-            'color': [
-                'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'brown',
-                'white', 'gray', 'black', 'beige', 'navy', 'olive', 'maroon', 'teal'
-            ],
-            'pattern': [
-                'solid', 'striped', 'polka dot', 'floral', 'plaid', 'checkered', 'geometric',
-                'abstract', 'animal print', 'camouflage', 'tie dye', 'paisley', 'chevron'
-            ],
-            'sleeve_type': [
-                'sleeveless', 'short sleeve', 'long sleeve', 'three quarter sleeve',
-                'bell sleeve', 'puff sleeve', 'raglan sleeve', 'kimono sleeve'
-            ],
-            'neckline': [
-                'round neck', 'v neck', 'scoop neck', 'square neck', 'cowl neck',
-                'boat neck', 'halter neck', 'off shoulder', 'one shoulder'
-            ],
-            'fit': [
-                'loose', 'regular', 'tight', 'oversized', 'slim', 'relaxed', 'fitted'
-            ],
-            'material': [
-                'cotton', 'polyester', 'wool', 'silk', 'denim', 'leather', 'suede',
-                'linen', 'rayon', 'nylon', 'spandex', 'cashmere', 'velvet', 'satin'
-            ]
-        }
-        
-        # Initialize model and processor
+        # Initialize the feature extractor and model
         try:
-            self.processor = AutoFeatureExtractor.from_pretrained(model_name)
-            self.model = AutoModelForImageClassification.from_pretrained(model_name).to(self.device)
-            
-            logger.info(f"Loaded Fashionpedia detector model: {model_name} on {self.device}")
+            self.feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
+            self.model = AutoModelForImageClassification.from_pretrained(model_name)
+            self.model.to(device)
+            self.model.eval()
+            logger.info(f"Initialized FashionpediaDetector with {model_name}")
         except Exception as e:
-            logger.error(f"Failed to load Fashionpedia model {model_name}: {e}")
+            logger.error(f"Failed to load model {model_name}: {e}")
             raise
+        
+        # Define fashion attributes
+        self.fashion_attributes = {
+            'colors': ['red', 'blue', 'green', 'yellow', 'black', 'white', 'gray', 'brown', 'purple', 'pink', 'orange'],
+            'patterns': ['solid', 'striped', 'polka_dot', 'floral', 'geometric', 'abstract', 'plaid', 'checkered'],
+            'categories': ['shirt', 'pants', 'dress', 'skirt', 'jacket', 'coat', 'sweater', 't-shirt', 'jeans', 'shorts'],
+            'sleeve_types': ['short_sleeve', 'long_sleeve', 'sleeveless', 'cap_sleeve'],
+            'necklines': ['round_neck', 'v_neck', 'crew_neck', 'scoop_neck', 'square_neck']
+        }
     
-    def crop_person(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.ndarray:
-        """Crop a person from the frame using the bounding box.
-        
-        Args:
-            frame: Input frame as numpy array
-            bbox: Bounding box as (x1, y1, x2, y2)
-            
-        Returns:
-            Cropped person image
-        """
+    def crop_person(self, frame: np.ndarray, bbox: List[int]) -> np.ndarray:
+        """Crop the person from the frame using the bounding box."""
         x1, y1, x2, y2 = bbox
-        # Ensure coordinates are within frame bounds
-        h, w = frame.shape[:2]
-        x1 = max(0, min(x1, w))
-        y1 = max(0, min(y1, h))
-        x2 = max(0, min(x2, w))
-        y2 = max(0, min(y2, h))
-        
-        # Ensure valid crop dimensions
-        if x2 <= x1 or y2 <= y1:
-            return np.zeros((224, 224, 3), dtype=np.uint8)
-        
-        cropped = frame[y1:y2, x1:x2]
-        
-        # Resize to standard size for model input
-        cropped = cv2.resize(cropped, (224, 224))
-        return cropped
+        return frame[y1:y2, x1:x2]
     
-    def segment_person_regions(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Dict[str, np.ndarray]:
-        """Segment a person into different body regions for detailed fashion analysis.
-        
-        Args:
-            frame: Input frame as numpy array
-            bbox: Bounding box as (x1, y1, x2, y2)
-            
-        Returns:
-            Dictionary of region crops: {'upper_body', 'lower_body', 'head', 'full_body'}
-        """
+    def segment_person_regions(self, frame: np.ndarray, bbox: List[int]) -> Dict[str, np.ndarray]:
+        """Segment a person into different body regions."""
         x1, y1, x2, y2 = bbox
-        h, w = frame.shape[:2]
-        
-        # Ensure coordinates are within frame bounds
-        x1 = max(0, min(x1, w))
-        y1 = max(0, min(y1, h))
-        x2 = max(0, min(x2, w))
-        y2 = max(0, min(y2, h))
-        
-        if x2 <= x1 or y2 <= y1:
-            return {}
-        
         person_height = y2 - y1
         person_width = x2 - x1
         
+        # Define region boundaries
+        head_height = int(person_height * 0.15)
+        upper_body_height = int(person_height * 0.35)
+        lower_body_height = person_height - head_height - upper_body_height
+        
         regions = {}
         
-        # Full body (original crop)
-        regions['full_body'] = cv2.resize(frame[y1:y2, x1:x2], (224, 224))
-        
-        # Head region (top 25% of person)
-        head_height = int(person_height * 0.25)
+        # Head region (top 15%)
         head_y1 = y1
-        head_y2 = min(y1 + head_height, y2)
-        if head_y2 > head_y1:
-            regions['head'] = cv2.resize(frame[head_y1:head_y2, x1:x2], (224, 224))
+        head_y2 = y1 + head_height
+        regions['head'] = frame[head_y1:head_y2, x1:x2]
         
-        # Upper body (25% to 60% of person height)
-        upper_y1 = y1 + int(person_height * 0.25)
-        upper_y2 = y1 + int(person_height * 0.60)
-        if upper_y2 > upper_y1:
-            regions['upper_body'] = cv2.resize(frame[upper_y1:upper_y2, x1:x2], (224, 224))
+        # Upper body region (15% - 50%)
+        upper_y1 = y1 + head_height
+        upper_y2 = y1 + head_height + upper_body_height
+        regions['upper_body'] = frame[upper_y1:upper_y2, x1:x2]
         
-        # Lower body (60% to bottom)
-        lower_y1 = y1 + int(person_height * 0.60)
+        # Lower body region (50% - bottom)
+        lower_y1 = y1 + head_height + upper_body_height
         lower_y2 = y2
-        if lower_y2 > lower_y1:
-            regions['lower_body'] = cv2.resize(frame[lower_y1:lower_y2, x1:x2], (224, 224))
+        regions['lower_body'] = frame[lower_y1:lower_y2, x1:x2]
+        
+        # Full body
+        regions['full_body'] = frame[y1:y2, x1:x2]
         
         return regions
     
-    def extract_fashion_attributes(self, person_image: np.ndarray, region_name: str = "unknown") -> Dict[str, str]:
-        """Extract fashion attributes using Fashionpedia-style analysis.
+    def extract_fashion_attributes(self, person_image: np.ndarray, region_name: str) -> Dict[str, str]:
+        """Extract fashion attributes from a person image region."""
+        if person_image.size == 0:
+            return {'category': 'unknown', 'color': 'unknown', 'pattern': 'unknown'}
         
-        Args:
-            person_image: Cropped person image as numpy array
-            region_name: Name of the body region being analyzed
-            
-        Returns:
-            Dictionary of fashion attributes
-        """
+        # Resize image for model input
+        resized_image = cv2.resize(person_image, (224, 224))
+        
+        # Convert BGR to RGB
+        rgb_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
+        
+        # Extract features using the model
         try:
-            # Convert numpy array to PIL Image
-            pil_image = Image.fromarray(cv2.cvtColor(person_image, cv2.COLOR_BGR2RGB))
-            
-            # Extract features using the model
-            inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
+            inputs = self.feature_extractor(images=rgb_image, return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             with torch.no_grad():
-                outputs = self.model(**inputs)
-                features = outputs.logits
-            
-            # Analyze features to determine attributes with region context
-            attributes = self._analyze_fashion_features(features, person_image, region_name)
-            
-            return attributes
-            
+                features = self.model(**inputs)
+                feature_vector = features.logits.squeeze().cpu().numpy()
         except Exception as e:
-            logger.error(f"Error extracting fashion attributes: {e}")
-            return {
-                'category': 'unknown',
-                'color': 'unknown',
-                'pattern': 'solid',
-                'sleeve_type': 'unknown',
-                'neckline': 'unknown',
-                'fit': 'regular',
-                'material': 'unknown'
-            }
-    
-    def _analyze_fashion_features(self, features: torch.Tensor, image: np.ndarray, region_name: str = "unknown") -> Dict[str, str]:
-        """Analyze extracted features to determine fashion attributes.
+            logger.warning(f"Failed to extract features: {e}")
+            return {'category': 'unknown', 'color': 'unknown', 'pattern': 'unknown'}
         
-        Args:
-            features: Model output features
-            image: Original image for additional analysis
-            region_name: Name of the body region being analyzed
-            
-        Returns:
-            Dictionary of fashion attributes
-        """
+        # Analyze fashion features
+        attributes = self._analyze_fashion_features(feature_vector, person_image, region_name)
+        
+        return attributes
+    
+    def _analyze_fashion_features(self, features: np.ndarray, image: np.ndarray, region_name: str) -> Dict[str, str]:
+        """Analyze fashion features from extracted features and image."""
         attributes = {}
         
-        # Basic color analysis
+        # Analyze color
         attributes['color'] = self._analyze_color(image)
         
-        # Pattern analysis
+        # Analyze pattern
         attributes['pattern'] = self._analyze_pattern(image)
         
-        # Region-specific category detection
-        if region_name == "head":
-            # Head region - likely hat, cap, or hair
+        # Analyze category based on region
+        attributes['category'] = self._detect_category(features, image)
+        
+        # Add region-specific attributes
+        if region_name == 'head':
             attributes['category'] = self._detect_head_category(image)
-        elif region_name == "upper_body":
-            # Upper body - shirts, blouses, etc.
-            attributes['category'] = self._detect_category(features, image)
-            attributes['sleeve_type'] = self._detect_sleeve_type(features, image)
-            attributes['neckline'] = self._detect_neckline(features, image)
-        elif region_name == "lower_body":
-            # Lower body - pants, skirts, etc.
+        elif region_name == 'lower_body':
             attributes['category'] = self._detect_lower_body_category(image)
-        else:
-            # Full body or unknown region
-            attributes['category'] = self._detect_category(features, image)
+        elif region_name == 'upper_body':
             attributes['sleeve_type'] = self._detect_sleeve_type(features, image)
             attributes['neckline'] = self._detect_neckline(features, image)
-        
-        # Fit analysis
-        attributes['fit'] = self._analyze_fit(features)
-        
-        # Material estimation (simplified)
-        attributes['material'] = self._estimate_material(features)
         
         return attributes
     
     def _analyze_color(self, image: np.ndarray) -> str:
-        """Analyze the dominant color in the image with improved accuracy for real-world lighting."""
-        # Convert to multiple color spaces for better analysis
+        """Analyze the dominant color in the image."""
+        if image.size == 0:
+            return 'unknown'
+        
+        # Convert to HSV for better color analysis
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # Calculate color statistics first
-        mean_hsv = np.mean(hsv, axis=(0, 1))
-        std_hsv = np.std(hsv, axis=(0, 1))
-        mean_rgb = np.mean(rgb, axis=(0, 1))
-        std_rgb = np.std(rgb, axis=(0, 1))
-        
-        h, s, v = mean_hsv
-        r, g, b = mean_rgb
-        
-        # Primary RGB-based color detection (more reliable for real-world lighting)
-        # Check for dominant RGB channels with more lenient thresholds
-        max_channel = max(r, g, b)
-        min_channel = min(r, g, b)
-        channel_diff = max_channel - min_channel
-        
-        # If there's a clear dominant color (difference > 10 - very lenient for real-world lighting)
-        if channel_diff > 10:
-            if r > g + 7 and r > b + 7:
-                # Red dominant
-                if g > b + 15:  # Red + Green = Orange/Yellow
-                    if r > g + 25:
-                        return "red"
-                    else:
-                        return "orange"
-                elif b > g + 15:  # Red + Blue = Purple/Pink
-                    if r > b + 25:
-                        return "red"
-                    else:
-                        return "purple"
-                else:
-                    return "red"
-            elif g > r + 7 and g > b + 7:
-                # Green dominant
-                if r > b + 7:  # Green + Red = Yellow
-                    return "yellow"
-                elif b > r + 7:  # Green + Blue = Teal/Cyan
-                    return "green"  # Still call it green
-                else:
-                    return "green"
-            elif b > r + 7 and b > g + 7:
-                # Blue dominant
-                if r > g + 7:  # Blue + Red = Purple
-                    return "purple"
-                else:
-                    return "blue"
-        
-        # HSV-based detection for more subtle colors
-        # Much more lenient thresholds for real-world lighting
+        # Define color ranges (more lenient thresholds)
         color_ranges = {
-            'red': [
-                ([0, 50, 50], [10, 255, 255]),       # Red lower - much more lenient
-                ([170, 50, 50], [180, 255, 255])     # Red upper - much more lenient
-            ],
-            'orange': [([10, 50, 50], [25, 255, 255])],
-            'yellow': [([25, 50, 50], [35, 255, 255])],
-            'green': [([35, 50, 50], [85, 255, 255])],
-            'blue': [([85, 50, 50], [130, 255, 255])],
-            'purple': [([130, 50, 50], [170, 255, 255])],
-            'pink': [([170, 50, 50], [180, 255, 255])],
-            'brown': [([10, 30, 30], [20, 255, 200])],
-            'white': [([0, 0, 180], [180, 50, 255])],
-            'gray': [([0, 0, 80], [180, 50, 180])],
-            'black': [([0, 0, 0], [180, 255, 80])]
+            'red': [(0, 10, 50, 255), (170, 180, 50, 255)],
+            'blue': [(100, 130, 50, 255)],
+            'green': [(35, 85, 50, 255)],
+            'yellow': [(20, 35, 50, 255)],
+            'black': [(0, 180, 0, 50)],
+            'white': [(0, 180, 0, 30)],
+            'gray': [(0, 180, 0, 80)],
+            'brown': [(10, 20, 50, 255)],
+            'purple': [(130, 170, 50, 255)],
+            'pink': [(140, 170, 50, 255)],
+            'orange': [(10, 20, 50, 255)]
         }
         
-        max_val = 0
-        dominant_color = "unknown"
-        total_pixels = hsv.shape[0] * hsv.shape[1]
+        # Find dominant color
+        max_pixels = 0
+        dominant_color = 'unknown'
         
-        for color_name, ranges in color_ranges.items():
-            color_pixels = 0
-            
+        for color, ranges in color_ranges.items():
+            total_pixels = 0
             for lower, upper in ranges:
-                mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
-                color_pixels += cv2.countNonZero(mask)
+                if len(lower) == 3:  # HSV tuple
+                    mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+                else:  # HSV range tuple
+                    mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+                total_pixels += cv2.countNonZero(mask)
             
-            color_percentage = color_pixels / total_pixels
-            
-            # Much lower threshold for real-world detection
-            if color_percentage > 0.03 and color_pixels > max_val:  # Reduced from 0.08 to 0.03
-                max_val = color_pixels
-                dominant_color = color_name
+            if total_pixels > max_pixels and total_pixels > image.size * 0.03:  # 3% threshold
+                max_pixels = total_pixels
+                dominant_color = color
         
-        # Enhanced fallback based on mean HSV values
-        if dominant_color == "unknown":
-            # Use mean HSV values for classification
-            if v < 80:  # Very dark
-                return "black"
-            elif v > 200 and s < 50:  # Very bright, low saturation
-                return "white"
-            elif s < 50 and 80 < v < 180:  # Low saturation, medium brightness
-                return "gray"
-            elif h < 10 or h > 170:  # Red hues
-                return "red"
-            elif 10 <= h < 25:  # Orange hues
-                return "orange"
-            elif 25 <= h < 35:  # Yellow hues
-                return "yellow"
-            elif 35 <= h < 85:  # Green hues
-                return "green"
-            elif 85 <= h < 130:  # Blue hues
-                return "blue"
-            elif 130 <= h < 170:  # Purple hues
-                return "purple"
-            else:
-                return "gray"
+        # Fallback: use mean HSV values
+        if dominant_color == 'unknown':
+            mean_hsv = np.mean(hsv, axis=(0, 1))
+            hue = mean_hsv[0]
+            saturation = mean_hsv[1]
+            value = mean_hsv[2]
+            
+            if value < 50:
+                dominant_color = 'black'
+            elif value > 200 and saturation < 50:
+                dominant_color = 'white'
+            elif saturation < 50:
+                dominant_color = 'gray'
+            elif hue < 10 or hue > 170:
+                dominant_color = 'red'
+            elif hue < 35:
+                dominant_color = 'orange'
+            elif hue < 85:
+                dominant_color = 'green'
+            elif hue < 130:
+                dominant_color = 'blue'
+            elif hue < 170:
+                dominant_color = 'purple'
         
         return dominant_color
     
     def _analyze_pattern(self, image: np.ndarray) -> str:
-        """Analyze the pattern in the image with improved accuracy."""
+        """Analyze the pattern in the image."""
+        if image.size == 0:
+            return 'unknown'
+        
         # Convert to grayscale
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        
-        # Edge detection with multiple thresholds
-        edges_low = cv2.Canny(blurred, 30, 100)
-        edges_high = cv2.Canny(blurred, 50, 150)
-        
-        # Calculate edge density
-        edge_density_low = np.sum(edges_low > 0) / (edges_low.shape[0] * edges_low.shape[1])
-        edge_density_high = np.sum(edges_high > 0) / (edges_high.shape[0] * edges_high.shape[1])
-        
-        # Use the lower threshold for pattern detection
-        edge_density = edge_density_low
-        
-        # Calculate texture variance
-        texture_variance = np.var(blurred)
-        
-        # Pattern classification with improved thresholds for real-world patterns
-        if edge_density < 0.02:
-            return "solid"
-        elif edge_density < 0.06:
-            # Check for subtle patterns like bee designs
-            if texture_variance > 800:
-                # Look for small circular patterns (bees, polka dots, etc.)
-                circles = cv2.HoughCircles(
-                    blurred, cv2.HOUGH_GRADIENT, 1, 15,
-                    param1=40, param2=25, minRadius=3, maxRadius=20
-                )
-                
-                if circles is not None and len(circles[0]) > 2:
-                    return "polka dot"  # Could be bees or similar small patterns
-                else:
-                    return "textured"
-            else:
-                return "solid"
-        elif edge_density < 0.12:
-            # Check for stripes
-            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
-            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25))
-            
-            horizontal_lines = cv2.morphologyEx(edges_low, cv2.MORPH_OPEN, horizontal_kernel)
-            vertical_lines = cv2.morphologyEx(edges_low, cv2.MORPH_OPEN, vertical_kernel)
-            
-            horizontal_density = np.sum(horizontal_lines) / (edges_low.shape[0] * edges_low.shape[1])
-            vertical_density = np.sum(vertical_lines) / (edges_low.shape[0] * edges_low.shape[1])
-            
-            # Check for dominant direction
-            if horizontal_density > 0.003 and horizontal_density > vertical_density * 1.5:
-                return "striped"
-            elif vertical_density > 0.003 and vertical_density > horizontal_density * 1.5:
-                return "striped"
-            else:
-                return "patterned"
-        else:
-            # High edge density - check for specific patterns
-            # Check for polka dots or small patterns
-            circles = cv2.HoughCircles(
-                blurred, cv2.HOUGH_GRADIENT, 1, 20,
-                param1=50, param2=30, minRadius=5, maxRadius=30
-            )
-            
-            if circles is not None and len(circles[0]) > 3:
-                return "polka dot"
-            
-            # Check for plaid/checkered patterns
-            if texture_variance > 1000 and edge_density > 0.2:
-                return "plaid"
-            
-            return "patterned"
-    
-    def _detect_category(self, features: torch.Tensor, image: np.ndarray) -> str:
-        """Detect the clothing category based on features and image analysis."""
-        h, w = image.shape[:2]
-        aspect_ratio = w / h
-        
-        # Calculate additional features
-        area = h * w
-        perimeter = 2 * (h + w)
-        compactness = (perimeter ** 2) / (4 * np.pi * area) if area > 0 else 0
-        
-        # Analyze color distribution
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        saturation = np.mean(hsv[:, :, 1])
-        value = np.mean(hsv[:, :, 2])
-        
-        # Region-specific category detection
-        if aspect_ratio > 1.8:  # Very wide - likely pants/skirt
-            if saturation > 100:  # High saturation suggests jeans
-                return "jeans"
-            else:
-                return "pants"
-        elif aspect_ratio > 1.3:  # Wide - likely pants/shorts
-            if h < w * 0.6:  # Short height suggests shorts
-                return "shorts"
-            else:
-                return "pants"
-        elif aspect_ratio < 0.6:  # Very tall - likely dress
-            return "dress"
-        elif aspect_ratio < 0.8:  # Tall - likely dress or long shirt
-            if value < 100:  # Dark suggests formal wear
-                return "dress"
-            else:
-                return "shirt"
-        elif 0.8 <= aspect_ratio <= 1.2:  # Square-ish - likely shirt/top
-            if saturation > 120:  # High saturation suggests t-shirt
-                return "t-shirt"
-            elif compactness > 20:  # High compactness suggests formal shirt
-                return "shirt"
-            else:
-                return "blouse"
-        else:  # Default case
-            return "shirt"
-    
-    def _analyze_fit(self, features: torch.Tensor) -> str:
-        """Analyze the fit of the clothing item."""
-        # Simplified analysis - would need trained model
-        return "regular"
-    
-    def _estimate_material(self, features: torch.Tensor) -> str:
-        """Estimate the material of the clothing item."""
-        # Simplified estimation - would need trained model
-        return "cotton"
-    
-    def _detect_sleeve_type(self, features: torch.Tensor, image: np.ndarray) -> str:
-        """Detect the sleeve type for upper body items."""
-        h, w = image.shape[:2]
-        
-        # Analyze the top portion of the image for sleeve detection
-        top_portion = image[:h//3, :]
-        
-        # Convert to grayscale for edge analysis
-        gray = cv2.cvtColor(top_portion, cv2.COLOR_BGR2GRAY)
+        # Edge detection
         edges = cv2.Canny(gray, 50, 150)
+        edge_density = np.sum(edges > 0) / edges.size
         
-        # Calculate edge density in different regions
-        left_region = edges[:, :w//3]
-        right_region = edges[:, 2*w//3:]
-        center_region = edges[:, w//3:2*w//3]
-        
-        left_density = np.sum(left_region > 0) / left_region.size
-        right_density = np.sum(right_region > 0) / right_region.size
-        center_density = np.sum(center_region > 0) / center_region.size
-        
-        # Sleeve type classification based on edge patterns
-        if left_density > 0.1 and right_density > 0.1:
-            # High edge density on sides suggests sleeves
-            if center_density < 0.05:
-                return "long sleeve"
-            else:
-                return "short sleeve"
-        elif left_density < 0.05 and right_density < 0.05:
-            # Low edge density on sides suggests sleeveless
-            return "sleeveless"
-        else:
-            # Default to short sleeve
-            return "short sleeve"
-    
-    def _detect_neckline(self, features: torch.Tensor, image: np.ndarray) -> str:
-        """Detect the neckline type for upper body items."""
-        h, w = image.shape[:2]
-        
-        # Focus on the top portion for neckline analysis
-        top_portion = image[:h//4, w//4:3*w//4]
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(top_portion, cv2.COLOR_BGR2GRAY)
-        
-        # Apply edge detection
-        edges = cv2.Canny(gray, 30, 100)
-        
-        # Look for horizontal lines (necklines)
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 1))
-        horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
-        
-        # Count horizontal lines at different heights
-        line_counts = []
-        for y in range(0, gray.shape[0], 5):
-            line_count = np.sum(horizontal_lines[y:y+5, :] > 0)
-            line_counts.append(line_count)
-        
-        # Analyze line distribution
-        if len(line_counts) > 0:
-            max_lines = max(line_counts)
-            avg_lines = np.mean(line_counts)
+        # Pattern classification
+        if edge_density < 0.02:
+            return 'solid'
+        elif edge_density > 0.08:
+            # Check for stripes
+            horizontal_edges = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+            vertical_edges = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
             
-            if max_lines > 50:  # Strong horizontal line suggests v-neck
-                return "v neck"
-            elif avg_lines > 20:  # Moderate lines suggest round neck
-                return "round neck"
+            horizontal_strength = np.mean(np.abs(horizontal_edges))
+            vertical_strength = np.mean(np.abs(vertical_edges))
+            
+            if horizontal_strength > vertical_strength * 1.5:
+                return 'striped'
+            elif vertical_strength > horizontal_strength * 1.5:
+                return 'striped'
             else:
-                return "round neck"  # Default
+                return 'patterned'
         else:
-            return "round neck"
+            return 'patterned'
+    
+    def _detect_category(self, features: np.ndarray, image: np.ndarray) -> str:
+        """Detect clothing category based on features and image analysis."""
+        # Simple heuristic based on image aspect ratio
+        height, width = image.shape[:2]
+        aspect_ratio = width / height if height > 0 else 1
+        
+        if aspect_ratio > 1.5:  # Wide rectangle
+            return 'pants'
+        elif aspect_ratio < 0.8:  # Tall rectangle
+            return 'dress'
+        else:
+            return 'shirt'
     
     def _detect_head_category(self, image: np.ndarray) -> str:
-        """Detect head accessories like hats, caps, etc."""
-        h, w = image.shape[:2]
-        aspect_ratio = w / h
-        
-        # Analyze color and pattern
-        color = self._analyze_color(image)
-        pattern = self._analyze_pattern(image)
-        
-        # Head accessory classification
-        if aspect_ratio > 1.5:  # Wide suggests hat
-            if color in ['black', 'gray', 'brown']:
-                return "hat"
-            else:
-                return "cap"
-        else:
-            return "hat"
+        """Detect headwear category."""
+        return 'hat'
     
     def _detect_lower_body_category(self, image: np.ndarray) -> str:
-        """Detect lower body clothing like pants, skirts, etc."""
-        h, w = image.shape[:2]
-        aspect_ratio = w / h
+        """Detect lower body clothing category."""
+        height, width = image.shape[:2]
+        aspect_ratio = width / height if height > 0 else 1
         
-        # Analyze color and texture
-        color = self._analyze_color(image)
-        pattern = self._analyze_pattern(image)
-        
-        # Lower body classification
-        if aspect_ratio > 1.8:  # Very wide suggests pants
-            if color == 'blue' and pattern == 'solid':
-                return "jeans"
-            else:
-                return "pants"
-        elif aspect_ratio > 1.2:  # Wide suggests pants or skirt
-            if pattern in ['plaid', 'checkered']:
-                return "skirt"
-            else:
-                return "pants"
+        if aspect_ratio > 1.2:
+            return 'pants'
         else:
-            return "pants"  # Default
+            return 'shorts'
+    
+    def _detect_sleeve_type(self, features: np.ndarray, image: np.ndarray) -> str:
+        """Detect sleeve type."""
+        return 'short_sleeve'  # Default
+    
+    def _detect_neckline(self, features: np.ndarray, image: np.ndarray) -> str:
+        """Detect neckline type."""
+        return 'round_neck'  # Default
     
     def generate_fashionpedia_description(self, attributes: Dict[str, str]) -> str:
-        """Generate a Fashionpedia-style description from attributes.
+        """Generate a concise description from fashion attributes."""
+        parts = []
         
-        Args:
-            attributes: Dictionary of fashion attributes
-            
-        Returns:
-            Fashionpedia-style clothing description
-        """
-        description_parts = []
+        # Add color if not unknown
+        if attributes.get('color', 'unknown') != 'unknown':
+            parts.append(attributes['color'])
         
-        # Add color (be more lenient)
-        if attributes.get('color') and attributes['color'] != 'unknown':
-            description_parts.append(attributes['color'])
-        
-        # Add pattern (only if not solid)
-        if attributes.get('pattern') and attributes['pattern'] != 'solid':
-            description_parts.append(attributes['pattern'])
-        
-        # Add sleeve type for upper body items (only if not unknown)
-        if attributes.get('category') in ['shirt', 'blouse', 't-shirt', 'polo']:
-            if attributes.get('sleeve_type') and attributes['sleeve_type'] != 'unknown':
-                description_parts.append(attributes['sleeve_type'])
-        
-        # Add neckline for upper body items (only if not round neck - most common)
-        if attributes.get('category') in ['shirt', 'blouse', 't-shirt', 'polo']:
-            if attributes.get('neckline') and attributes['neckline'] not in ['round neck', 'unknown']:
-                description_parts.append(attributes['neckline'])
+        # Add pattern if not solid or unknown
+        pattern = attributes.get('pattern', 'unknown')
+        if pattern not in ['unknown', 'solid']:
+            parts.append(pattern)
         
         # Add category
-        if attributes.get('category') and attributes['category'] != 'unknown':
-            description_parts.append(attributes['category'])
+        category = attributes.get('category', 'clothing')
+        if category != 'unknown':
+            parts.append(category)
         
-        # Add material only if it's distinctive (not cotton)
-        if attributes.get('material') and attributes['material'] not in ['cotton', 'unknown']:
-            description_parts.append(attributes['material'])
+        # Add sleeve type for upper body
+        if 'sleeve_type' in attributes and attributes['sleeve_type'] != 'unknown':
+            parts.append(attributes['sleeve_type'])
         
-        # If we have no description parts, provide a basic fallback
-        if not description_parts:
-            if attributes.get('color') and attributes['color'] != 'unknown':
-                return f"{attributes['color']} clothing"
-            else:
-                return "clothing"
+        # Add neckline for upper body
+        if 'neckline' in attributes and attributes['neckline'] != 'round_neck':
+            parts.append(attributes['neckline'])
         
-        return " ".join(description_parts)
+        if not parts:
+            return 'clothing'
+        
+        return ' '.join(parts)
     
-    def process_detections(self, frame: np.ndarray, detections: List[Tuple[Tuple[int, int, int, int], str]]) -> List[Dict[str, Any]]:
-        """Process all person detections and generate Fashionpedia-style descriptions.
+    def process_detections(self, frame: np.ndarray, detections: List[Dict]) -> Dict:
+        """Process detections and generate clothing descriptions."""
+        clothing_items = []
         
-        Args:
-            frame: Input frame
-            detections: List of (bbox, class_name) tuples from YOLO
-            
-        Returns:
-            List of detection dictionaries with Fashionpedia-style descriptions
-        """
-        results = []
-        
-        for i, (bbox, class_name) in enumerate(detections):
-            if class_name.lower() == "person":
-                # Segment person into body regions
+        for detection in detections:
+            if detection['class'] == 'person':
+                bbox = detection['bbox']
+                
+                # Segment person into regions
                 regions = self.segment_person_regions(frame, bbox)
                 
-                # Generate detailed fashion descriptions for each region
-                clothing_items = {}
+                region_descriptions = {}
                 
+                # Analyze each region
                 for region_name, region_image in regions.items():
-                    # Extract Fashionpedia attributes
-                    attributes = self.extract_fashion_attributes(region_image, region_name)
-                    
-                    # Generate description from attributes
-                    description = self.generate_fashionpedia_description(attributes)
-                    
-                    if description and description != "clothing":
-                        clothing_items[region_name] = description
+                    if region_image.size > 0:
+                        attributes = self.extract_fashion_attributes(region_image, region_name)
+                        description = self.generate_fashionpedia_description(attributes)
+                        region_descriptions[region_name] = description
+                    else:
+                        region_descriptions[region_name] = 'clothing not visible'
                 
-                # Combine clothing items into a structured description
-                clothing_desc = self._combine_clothing_descriptions(clothing_items)
+                # Combine descriptions
+                combined_description = self._combine_clothing_descriptions(region_descriptions)
                 
-                # Create detection result with detailed fashion information
-                detection_result = {
-                    "id": i + 1,
-                    "bbox": list(bbox),
-                    "class": class_name,
-                    "description": clothing_desc,
-                    "clothing_items": clothing_items,  # Detailed breakdown
-                    "timestamp": time.time()
-                }
-                
-                results.append(detection_result)
+                clothing_items.append({
+                    'id': detection.get('id', len(clothing_items) + 1),
+                    'bbox': bbox,
+                    'description': combined_description,
+                    'clothing_items': region_descriptions
+                })
         
-        return results
+        return {
+            'timestamp': detections[0]['timestamp'] if detections else None,
+            'detections': clothing_items
+        }
     
-    def _combine_clothing_descriptions(self, clothing_items: Dict[str, str]) -> str:
-        """Combine individual clothing item descriptions into a coherent description.
+    def _combine_clothing_descriptions(self, region_descriptions: Dict[str, str]) -> str:
+        """Combine regional clothing descriptions into a single description."""
+        descriptions = []
         
-        Args:
-            clothing_items: Dictionary of clothing descriptions by body region
-            
-        Returns:
-            Combined clothing description
-        """
-        if not clothing_items:
-            return "clothing not visible"
+        for region, desc in region_descriptions.items():
+            if desc and desc not in ['clothing not visible', 'clothing']:
+                descriptions.append(desc)
         
-        # Build description from different regions, avoiding repetition
-        description_parts = []
-        seen_descriptions = set()
+        if not descriptions:
+            return 'clothing detected'
         
-        # Priority order: upper body, lower body, head
-        regions_order = ['upper_body', 'lower_body', 'head']
-        
-        for region in regions_order:
-            if region in clothing_items:
-                desc = clothing_items[region]
-                # Only add if we haven't seen this exact description and it's not just "clothing"
-                if desc not in seen_descriptions and desc != "clothing" and desc != "clothing not visible":
-                    description_parts.append(desc)
-                    seen_descriptions.add(desc)
-        
-        # If we have specific regions, use them; otherwise use full body
-        if description_parts:
-            return ", ".join(description_parts)
-        elif 'full_body' in clothing_items:
-            full_body_desc = clothing_items['full_body']
-            if full_body_desc != "clothing" and full_body_desc != "clothing not visible":
-                return full_body_desc
-        
-        # Final fallback - try to extract any useful information
-        for region, desc in clothing_items.items():
-            if desc and desc != "clothing" and desc != "clothing not visible":
-                return desc
-        
-        return "clothing not visible"
+        return ', '.join(descriptions)
+

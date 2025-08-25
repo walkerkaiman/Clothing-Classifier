@@ -82,6 +82,8 @@ class ClothingDataServer:
                 self._last_request_time = time.time()
                 return self._current_data
         
+
+        
         @self.app.get("/detections/latest")
         async def get_latest_detections():
             """Get latest clothing detections (alias for /detections)."""

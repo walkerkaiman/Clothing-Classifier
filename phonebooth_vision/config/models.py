@@ -17,6 +17,11 @@ class ModelConfig(BaseModel):
     name: str = Field("yolov8m-cls", description="Registry key of the model to load")
     confidence: float = Field(0.25, ge=0, le=1)
     iou: float = Field(0.5, ge=0, le=1)
+    person_only: bool = Field(True, description="Enable person-only detection for better performance")
+    classes: Optional[list[str]] = Field(None, description="List of classes to detect when person_only is False")
+    use_gpu: bool = Field(True, description="Enable GPU acceleration")
+    enable_half_precision: bool = Field(True, description="Enable half-precision (FP16) for better performance")
+    gpu_memory_fraction: float = Field(0.8, ge=0.1, le=1.0, description="GPU memory fraction to use")
 
 
 class ClothingConfig(BaseModel):
@@ -25,13 +30,20 @@ class ClothingConfig(BaseModel):
     model_name: str = Field("Salesforce/blip-image-captioning-base", description="Vision-language model for advanced detection")
     update_frequency: float = Field(1.0, description="Seconds between clothing updates", ge=0.1, le=10.0)
     min_person_confidence: float = Field(0.5, description="Minimum confidence for person detection", ge=0.1, le=1.0)
+    
+    # BLIP generation parameters
+    max_length: int = Field(150, description="Maximum length of generated description", ge=50, le=300)
+    num_beams: int = Field(3, description="Number of beam search paths", ge=1, le=10)
+    temperature: float = Field(0.9, description="Temperature for sampling (higher = more creative)", ge=0.1, le=1.0)
+    do_sample: bool = Field(True, description="Enable sampling for more variety")
+    top_p: float = Field(0.9, description="Nucleus sampling parameter", ge=0.1, le=1.0)
 
 
 class ServerConfig(BaseModel):
     enabled: bool = Field(True, description="Enable JSON server")
     server_type: str = Field("http", description="Server type: 'http' or 'file'")
     host: str = Field("0.0.0.0", description="Server host")
-    port: int = Field(8001, description="Server port", ge=1024, le=65535)
+    port: int = Field(8000, description="Server port", ge=1024, le=65535)
     output_file: str = Field("clothing_detections.json", description="Output file for file-based server")
 
 

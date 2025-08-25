@@ -1,4 +1,4 @@
-# Phonebooth-Vision
+# YOLO Classifier
 
 Local, privacy-preserving computer-vision service that detects objects with YOLOv8, publishes live counts via a JSON API, and serves a real-time annotated video stream over HTTP with advanced clothing detection capabilities.
 
@@ -27,27 +27,29 @@ Local, privacy-preserving computer-vision service that detects objects with YOLO
 
 ## Quick-start
 
+### 🔧 Manual Setup
+
 ```powershell
 # clone repo
- git clone https://github.com/walkerkaiman/YOLO-Classifier
- cd YOLO-Classifier
+git clone https://github.com/walkerkaiman/YOLO-Classifier
+cd YOLO-Classifier
 
 # create Python 3.11+ venv
- python -m venv .venv
- . .venv\Scripts\Activate.ps1
+python -m venv .venv
+. .venv\Scripts\Activate.ps1
 
 # install CUDA PyTorch (replace cu121 with cu118 if needed)
- pip install --upgrade pip
- pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install --upgrade pip
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# install project
- pip install -e .
+# install project dependencies
+pip install -r requirements.txt
 
 # run monitor (starts inference loop + clothing detection)
- python -m phonebooth_vision.simple_monitor
+python -m phonebooth_vision.simple_monitor
 
 # in another terminal
- uvicorn phonebooth_vision.http_server:app --host 0.0.0.0 --port 8000
+python -m phonebooth_vision.http_server
 ```
 
 Open `http://<PC-IP>:8000/` to see the UI.

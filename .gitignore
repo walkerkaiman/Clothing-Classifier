@@ -18,6 +18,7 @@ models/*.bin
 *.pth
 *.onnx
 *.bin
+yolov8n.pt
 
 # --- Outputs --------------------------------------------------
 objects.json
@@ -27,6 +28,24 @@ settings_override.json
 
 # --- Logs -----------------------------------------------------
 *.log
+phonebooth_vision.log
+
+# --- Build artifacts ------------------------------------------
+build/
+dist/
+*.egg-info/
+*.spec
+
+# --- Configuration backups ------------------------------------
+*.backup
+config.toml.backup
+
+# --- Runtime files --------------------------------------------
+clothing_detections.json
+phonebooth_vision.log
+
+# --- PyInstaller ----------------------------------------------
+*.spec
 
 # --- VS Code / IDE metadata ----------------------------------
 .vscode/

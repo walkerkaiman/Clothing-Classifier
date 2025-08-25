@@ -1,6 +1,3 @@
-# Phonebooth Vision Configuration
-# Copy this file to config.toml and modify as needed
-
 [app]
 data_dir = "data"
 write_interval = 1.0
@@ -16,17 +13,33 @@ fps = 30
 name = "yolov8n.pt"
 confidence = 0.25
 iou = 0.5
+person_only = true
+classes = [
+    "person",
+    "bottle",
+    "cup",
+    "chair",
+    "laptop",
+]
+use_gpu = true
+enable_half_precision = true
+gpu_memory_fraction = 0.8
 
 [app.clothing]
 enabled = true
-model_type = "advanced"  # "simple", "advanced", or "fashionpedia"
-model_name = "Salesforce/blip-image-captioning-base"  # Actual vision-language model
-update_frequency = 1.0  # seconds between clothing updates
+model_type = "advanced"
+model_name = "Salesforce/blip-image-captioning-base"
+update_frequency = 1.0
 min_person_confidence = 0.5
+max_length = 50
+num_beams = 1
+temperature = 1
+do_sample = true
+top_p = 0.9
 
 [app.server]
 enabled = true
-server_type = "http"  # "http" or "file"
+server_type = "http"
 host = "0.0.0.0"
-port = 8001
+port = 8000
 output_file = "clothing_detections.json"

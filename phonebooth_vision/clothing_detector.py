@@ -34,7 +34,45 @@ except ImportError:
 class ClothingDetector:
     """Generates descriptive clothing labels for detected persons."""
     
-    def __init__(self, model_name: str = "Salesforce/blip-image-captioning-base", device: Optional[str] = None):
+    def __init__(self, model_name: str = "Salesforce/blip-image-captioning-base", device: Optional[str] = None, config: Optional[dict] = None):
+        # Store configuration for BLIP generation parameters
+        self.config = config or {}
+        
+        # Clothing item to body area mapping
+        self.clothing_lookup = {
+            # Head items
+            'head': [
+                'hat', 'cap', 'beanie', 'headband', 'scarf', 'bandana', 'helmet', 'crown', 'tiara',
+                'headphones', 'earmuffs', 'sunglasses', 'glasses', 'mask', 'face mask', 'balaclava',
+                'hood', 'hair', 'wig', 'turban', 'hijab', 'veil', 'bonnet', 'beret',
+                'fedora', 'baseball cap', 'cowboy hat', 'top hat', 'beanie hat', 'winter hat'
+            ],
+            # Upper body items
+            'upper_body': [
+                'shirt', 't-shirt', 'tshirt', 'blouse', 'sweater', 'jacket', 'coat', 'hoodie',
+                'sweatshirt', 'cardigan', 'vest', 'tank top', 'polo', 'dress shirt', 'button down',
+                'flannel', 'denim jacket', 'leather jacket', 'blazer', 'suit jacket', 'windbreaker',
+                'rain jacket', 'winter coat', 'puffer jacket', 'bomber jacket', 'turtleneck',
+                'long sleeve', 'short sleeve', 'sleeveless', 'crop top', 'tube top', 'halter top',
+                'bra', 'undershirt', 'thermal', 'fleece', 'pullover', 'jersey', 'uniform'
+            ],
+            # Lower body items
+            'lower_body': [
+                'pants', 'jeans', 'trousers', 'shorts', 'skirt', 'dress', 'leggings', 'tights',
+                'sweatpants', 'joggers', 'khakis', 'chinos', 'slacks', 'cargo pants', 'overalls',
+                'jumpsuit', 'romper', 'culottes', 'capris', 'bermuda shorts', 'athletic shorts',
+                'basketball shorts', 'swimming trunks', 'board shorts', 'dress pants', 'suit pants',
+                'tuxedo pants', 'formal pants', 'casual pants', 'work pants', 'utility pants'
+            ],
+            # Footwear
+            'feet': [
+                'shoes', 'sneakers', 'boots', 'sandals', 'flip flops', 'heels', 'pumps', 'loafers',
+                'oxfords', 'mules', 'clogs', 'espadrilles', 'moccasins', 'espadrilles', 'slides',
+                'athletic shoes', 'running shoes', 'tennis shoes', 'basketball shoes', 'cleats',
+                'dress shoes', 'formal shoes', 'casual shoes', 'work boots', 'hiking boots',
+                'winter boots', 'rain boots', 'ankle boots', 'knee high boots', 'thigh high boots'
+            ]
+        }
         """Initialize the clothing detector with a vision-language model.
         
         Args:
@@ -159,13 +197,21 @@ class ClothingDetector:
                 inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
                 
                 # Generate caption without text input - this actually works!
+                # Use configuration parameters if available, otherwise use defaults
+                max_length = self.config.get('max_length', 100)
+                num_beams = self.config.get('num_beams', 5)
+                temperature = self.config.get('temperature', 0.7)
+                do_sample = self.config.get('do_sample', True)
+                top_p = self.config.get('top_p', 0.9)
+                
                 outputs = self.model.generate(
                     **inputs,
-                    max_length=75,  # Longer for more detail
-                    num_beams=5,
+                    max_length=max_length,
+                    num_beams=num_beams,
                     early_stopping=True,
-                    do_sample=True,  # Add some variety
-                    temperature=0.7
+                    do_sample=do_sample,
+                    temperature=temperature,
+                    top_p=top_p
                 )
                 
                 caption = self.processor.decode(outputs[0], skip_special_tokens=True)
@@ -273,28 +319,10 @@ class ClothingDetector:
         Returns:
             Enhanced clothing description focusing on the clothing items
         """
-        # Convert to lowercase and clean up
-        description = caption.lower().strip()
+        # Keep the original caption mostly intact, just do minimal cleaning
+        description = caption.strip()
         
-        # Extract clothing items from BLIP descriptions like "a man wearing a green hat"
-        clothing_patterns = [
-            r"wearing\s+(.+)",  # "wearing a green hat" -> "a green hat"
-            r"has\s+(.+)",      # "has a blue shirt" -> "a blue shirt"
-            r"with\s+(.+)",     # "with red pants" -> "red pants"
-        ]
-        
-        import re
-        for pattern in clothing_patterns:
-            match = re.search(pattern, description)
-            if match:
-                description = match.group(1).strip()
-                break
-        
-        # Remove articles and clean up
-        description = re.sub(r'\b(a|an|the)\s+', '', description)
-        description = re.sub(r'\s+', ' ', description).strip()
-        
-        # Fashion-specific enhancements and standardization
+        # Only do basic standardization, don't remove content
         fashion_replacements = {
             "tshirt": "t-shirt",
             "t shirt": "t-shirt", 
@@ -313,6 +341,75 @@ class ClothingDetector:
         
         return description.strip()
     
+    def _categorize_clothing_items(self, description: str) -> Dict[str, List[str]]:
+        """Categorize clothing items from BLIP description into body areas.
+        
+        Args:
+            description: Full BLIP description of clothing
+            
+        Returns:
+            Dictionary mapping body areas to lists of clothing items
+        """
+        categorized_items = {
+            'head': [],
+            'upper_body': [],
+            'lower_body': [],
+            'feet': []
+        }
+        description_lower = description.lower()
+        
+        # Extract clothing items from the description
+        # Split by common separators and clean up
+        import re
+        
+        # More comprehensive splitting to catch all clothing items
+        # Split by commas, semicolons, "and", "with", "wearing", etc.
+        items = re.split(r'[,;]|\sand\s|\swith\s|\swearing\s|\shas\s|\salso\s|\sbut\s|\sor\s', description_lower)
+        items = [item.strip() for item in items if item.strip()]
+        
+        # If splitting didn't work well, try to extract clothing items more directly
+        if len(items) <= 1:
+            # Look for clothing patterns in the full description
+            clothing_patterns = [
+                r'wearing\s+([^,]+)',  # "wearing a green hat and blue shirt"
+                r'has\s+([^,]+)',      # "has a red jacket"
+                r'with\s+([^,]+)',     # "with black pants"
+            ]
+            for pattern in clothing_patterns:
+                matches = re.findall(pattern, description_lower)
+                if matches:
+                    items.extend(matches)
+        
+        # Process each item and categorize it
+        for item in items:
+            item = item.strip()
+            if not item or len(item) < 3:
+                continue
+                
+            # Find which body area this item belongs to
+            for body_area, clothing_list in self.clothing_lookup.items():
+                for clothing_item in clothing_list:
+                    # Use flexible matching to catch clothing items
+                    # Try exact word boundary match first
+                    pattern = r'\b' + re.escape(clothing_item) + r'\b'
+                    if re.search(pattern, item):
+                        # Add item to the list for this body area (don't overwrite)
+                        if item not in categorized_items[body_area]:
+                            categorized_items[body_area].append(item)
+                        break
+                    # If no exact match, try partial match for compound terms
+                    elif clothing_item in item and len(clothing_item) > 3:
+                        # Add item to the list for this body area (don't overwrite)
+                        if item not in categorized_items[body_area]:
+                            categorized_items[body_area].append(item)
+                        break
+                else:
+                    continue  # Only break inner loop if item was found
+                break  # Break outer loop if item was found
+        
+        # Remove empty lists
+        return {k: v for k, v in categorized_items.items() if v}
+    
     def process_detections(self, frame: np.ndarray, detections: List[Tuple[Tuple[int, int, int, int], str]]) -> List[Dict[str, Any]]:
         """Process all person detections and generate detailed clothing descriptions.
         
@@ -327,22 +424,20 @@ class ClothingDetector:
         
         for i, (bbox, class_name) in enumerate(detections):
             if class_name.lower() == "person":
-                # Segment person into body regions
-                regions = self.segment_person_regions(frame, bbox)
+                # Generate comprehensive clothing description using BLIP on full person area
+                full_body_crop = self.crop_person(frame, bbox)
+                full_description = self.generate_clothing_description(full_body_crop)
                 
-                # Generate detailed clothing descriptions for each region
-                clothing_items = self.generate_detailed_clothing_description(regions)
+                # Categorize ALL clothing items from the BLIP description into body areas
+                categorized_items = self._categorize_clothing_items(full_description)
                 
-                # Combine clothing items into a structured description
-                clothing_desc = self._combine_clothing_descriptions(clothing_items)
-                
-                # Create detection result with detailed clothing information
+                # Create detection result with full description and categorized items
                 detection_result = {
                     "id": i + 1,
                     "bbox": list(bbox),
                     "class": class_name,
-                    "description": clothing_desc,
-                    "clothing_items": clothing_items,  # Detailed breakdown
+                    "description": full_description,  # Keep full BLIP description unchanged
+                    "clothing_items": categorized_items,  # Categorized by body area (lists of items)
                     "timestamp": time.time()
                 }
                 
